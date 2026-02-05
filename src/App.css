@@ -1,0 +1,380 @@
+/* src/App.css */
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif;
+  overflow: hidden;
+  background: linear-gradient(135deg, #0f0f1e 0%, #1a1a2e 50%, #16213e 100%);
+  color: white;
+}
+
+.app-container {
+  width: 100vw;
+  height: 100vh;
+  position: relative;
+  overflow: hidden;
+}
+
+.canvas-wrapper {
+  width: 100%;
+  height: 100%;
+  position: absolute;
+  top: 0;
+  left: 0;
+}
+
+/* Glassmorphism base */
+.glass-card {
+  background: rgba(255, 255, 255, 0.08);
+  backdrop-filter: blur(20px) saturate(180%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+}
+
+/* UI Overlay */
+.ui-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  z-index: 1000;
+  pointer-events: auto;
+}
+
+.pointer-events-none {
+  pointer-events: none;
+}
+
+/* Loading Card */
+.loading-card {
+  padding: 60px 80px;
+  border-radius: 24px;
+  text-align: center;
+  animation: fadeIn 0.4s ease-out;
+}
+
+.spinner {
+  width: 64px;
+  height: 64px;
+  border: 5px solid rgba(255, 255, 255, 0.1);
+  border-top-color: #6a4aff;
+  border-radius: 50%;
+  animation: spin 1s cubic-bezier(0.68, -0.55, 0.265, 1.55) infinite;
+  margin: 0 auto 24px;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+.loading-title {
+  font-size: 28px;
+  font-weight: 700;
+  margin-bottom: 24px;
+  letter-spacing: 0.5px;
+}
+
+.progress-bar {
+  width: 240px;
+  height: 6px;
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 3px;
+  overflow: hidden;
+  margin: 0 auto;
+}
+
+.progress-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #6a4aff, #8a6aff, #6a4aff);
+  background-size: 200% 100%;
+  animation: progressAnimation 1.5s ease-in-out infinite;
+}
+
+@keyframes progressAnimation {
+  0%, 100% { transform: translateX(-50%); }
+  50% { transform: translateX(50%); }
+}
+
+/* Instruction Card */
+.instruction-card {
+  padding: 48px 72px;
+  border-radius: 24px;
+  text-align: center;
+  animation: pulse 2.5s ease-in-out infinite;
+  pointer-events: none;
+}
+
+.tap-icon {
+  font-size: 72px;
+  margin-bottom: 20px;
+  animation: bounce 1.2s ease-in-out infinite;
+}
+
+@keyframes bounce {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-12px); }
+}
+
+.instruction-title {
+  font-size: 40px;
+  font-weight: 800;
+  margin-bottom: 12px;
+  letter-spacing: 0.5px;
+  background: linear-gradient(135deg, #ffffff, #8a6aff);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+.instruction-subtitle {
+  font-size: 18px;
+  color: rgba(255, 255, 255, 0.7);
+  font-weight: 400;
+}
+
+@keyframes pulse {
+  0%, 100% {
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4),
+                0 0 40px rgba(106, 74, 255, 0.3);
+  }
+  50% {
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4),
+                0 0 60px rgba(106, 74, 255, 0.7);
+  }
+}
+
+/* Info Bar */
+.info-bar {
+  position: fixed;
+  top: 28px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 16px 36px;
+  border-radius: 16px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  z-index: 1000;
+  animation: slideDown 0.5s ease-out;
+}
+
+.info-icon {
+  font-size: 22px;
+}
+
+.info-text {
+  font-size: 15px;
+  font-weight: 500;
+  letter-spacing: 0.3px;
+}
+
+@keyframes slideDown {
+  from {
+    opacity: 0;
+    transform: translateX(-50%) translateY(-30px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+  }
+}
+
+/* Control Bar */
+.control-bar {
+  position: fixed;
+  bottom: 36px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 1000;
+  animation: slideUp 0.5s ease-out;
+}
+
+.control-panel {
+  padding: 24px 36px;
+  border-radius: 20px;
+  display: flex;
+  align-items: center;
+  gap: 20px;
+}
+
+@keyframes slideUp {
+  from {
+    opacity: 0;
+    transform: translateX(-50%) translateY(30px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+  }
+}
+
+/* Control Buttons */
+.control-button {
+  padding: 16px 32px;
+  border: none;
+  border-radius: 14px;
+  font-size: 16px;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  letter-spacing: 0.4px;
+}
+
+.secondary {
+  background: rgba(255, 255, 255, 0.1);
+  color: white;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  backdrop-filter: blur(10px);
+}
+
+.secondary:hover {
+  background: rgba(255, 255, 255, 0.18);
+  transform: translateY(-3px);
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.35);
+}
+
+.primary {
+  background: linear-gradient(135deg, #6a4aff 0%, #8a6aff 100%);
+  color: white;
+  font-size: 17px;
+  padding: 18px 40px;
+  box-shadow: 0 10px 28px rgba(106, 74, 255, 0.5);
+  border: 1px solid rgba(138, 106, 255, 0.4);
+}
+
+.primary:hover {
+  background: linear-gradient(135deg, #7a5aff 0%, #9a7aff 100%);
+  transform: translateY(-3px);
+  box-shadow: 0 14px 36px rgba(106, 74, 255, 0.7);
+}
+
+.control-button:active {
+  transform: translateY(-1px);
+}
+
+.button-icon {
+  font-size: 20px;
+  line-height: 1;
+}
+
+.button-text {
+  line-height: 1;
+}
+
+/* Pack Info */
+.pack-info {
+  padding: 16px 28px;
+  border-radius: 14px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  min-width: 110px;
+}
+
+.pack-label {
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 1.5px;
+  color: rgba(255, 255, 255, 0.6);
+}
+
+.pack-number {
+  font-size: 20px;
+  font-weight: 800;
+  color: white;
+}
+
+/* Animations */
+@keyframes fadeIn {
+  from { 
+    opacity: 0;
+    transform: scale(0.95);
+  }
+  to { 
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+/* Responsive Design */
+@media (max-width: 768px) {
+  .control-panel {
+    flex-wrap: wrap;
+    gap: 14px;
+    padding: 20px 24px;
+  }
+  
+  .control-button {
+    font-size: 15px;
+    padding: 14px 24px;
+  }
+  
+  .primary {
+    font-size: 16px;
+    padding: 16px 32px;
+  }
+  
+  .instruction-title {
+    font-size: 32px;
+  }
+  
+  .tap-icon {
+    font-size: 56px;
+  }
+  
+  .info-bar {
+    top: 20px;
+    padding: 14px 28px;
+  }
+  
+  .info-text {
+    font-size: 14px;
+  }
+  
+  .instruction-card {
+    padding: 36px 48px;
+  }
+}
+
+@media (max-width: 480px) {
+  .control-panel {
+    width: 90%;
+    justify-content: center;
+  }
+  
+  .button-text {
+    display: none;
+  }
+  
+  .control-button {
+    padding: 14px;
+  }
+  
+  .primary .button-text {
+    display: inline;
+  }
+}
+
+/* High DPI support */
+@media (-webkit-min-device-pixel-ratio: 2), (min-resolution: 192dpi) {
+  .glass-card {
+    backdrop-filter: blur(30px) saturate(200%);
+    -webkit-backdrop-filter: blur(30px) saturate(200%);
+  }
+}
