@@ -1,8 +1,7 @@
 // src/components/Experience.jsx
 import { Suspense } from 'react';
 import { Canvas } from '@react-three/fiber';
-import { OrbitControls, Environment, ContactShadows } from '@react-three/drei';
-import { EffectComposer, Bloom } from '@react-three/postprocessing';
+import { OrbitControls } from '@react-three/drei';
 import * as THREE from 'three';
 import CardHand from './CardHand';
 import PackComponent from './PackComponent';
@@ -16,47 +15,29 @@ export default function Experience({
   bottomRef, 
   topMaterialRef, 
   bottomMaterialRef, 
-  onPackClick 
+  onPackAnimationComplete 
 }) {
   return (
     <Canvas 
-      camera={{ position: [0, 0, 8], fov: 60 }}
-      gl={{ 
-        antialias: true,
-        toneMapping: THREE.ACESFilmicToneMapping,
-        toneMappingExposure: 1.0,
-        outputColorSpace: THREE.SRGBColorSpace
-      }}
+      camera={{ position: [0, 0, 10], fov: 60 }}
+      gl={{ toneMapping: 0, toneMappingExposure: 1.0 }}
+      scene={{ background: new THREE.Color('#000000') }}
     >
       <Suspense fallback={null}>
-        {/* Studio Environment - MANDATORY for metallic materials to look silver */}
-        <Environment preset="studio" />
+        <ambientLight intensity={0.5} />
         
-        {/* Clean Lighting - NO FLASH */}
-        <ambientLight intensity={0.8} />
-        <directionalLight position={[5, 5, 5]} intensity={1} castShadow />
-        
-        {/* Contact Shadows */}
-        <ContactShadows 
-          position={[0, -2.5, 0]}
-          opacity={0.5} 
-          scale={10} 
-          blur={2.5}
-          far={1.6}
-        />
-        
-        {/* Show Pack */}
+        {/* Pack Display */}
         {isPackVisible && texturesLoaded && (
           <PackComponent 
             topRef={topRef}
             bottomRef={bottomRef}
             topMaterialRef={topMaterialRef}
             bottomMaterialRef={bottomMaterialRef}
-            onPackClick={onPackClick}
+            onPackAnimationComplete={onPackAnimationComplete}
           />
         )}
         
-        {/* Show Cards */}
+        {/* Card Hand Display */}
         {status === 'revealed' && texturesLoaded && (
           <Suspense fallback={null}>
             <CardHand cards={cards} />
@@ -68,21 +49,12 @@ export default function Experience({
           enableDamping
           dampingFactor={0.05}
           enableZoom={true}
-          minDistance={4}
+          minDistance={5}
           maxDistance={15}
+          maxPolarAngle={Math.PI / 2}
           enabled={status === 'revealed'}
         />
         
-        {/* Bloom */}
-        <EffectComposer>
-          <Bloom
-            intensity={0.8}
-            luminanceThreshold={0.9}
-            luminanceSmoothing={0.9}
-            mipmapBlur
-            height={300}
-          />
-        </EffectComposer>
       </Suspense>
     </Canvas>
   );

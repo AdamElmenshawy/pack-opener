@@ -1,73 +1,93 @@
 // src/components/PackComponent.jsx
 import { useRef } from 'react';
 import { RoundedBox } from '@react-three/drei';
+import gsap from 'gsap';
 
-export default function PackComponent({ topRef, bottomRef, topMaterialRef, bottomMaterialRef, onPackClick }) {
+export default function PackComponent({ 
+  topRef, 
+  bottomRef, 
+  topMaterialRef, 
+  bottomMaterialRef, 
+  onPackAnimationComplete 
+}) {
+  const isAnimating = useRef(false);
+
+  const handlePackClick = (e) => {
+    e.stopPropagation();
+    
+    if (isAnimating.current || !topRef.current || !bottomRef.current) {
+      return;
+    }
+    
+    console.log('Pack clicked - starting animation');
+    isAnimating.current = true;
+
+    // GSAP Timeline for synchronized animation
+    const tl = gsap.timeline({
+      onComplete: () => {
+        isAnimating.current = false;
+        onPackAnimationComplete();
+      }
+    });
+
+    // Animate top half up
+    tl.to(topRef.current.position, {
+      y: 10,
+      duration: 0.8,
+      ease: 'power2.in'
+    }, 0);
+
+    // Animate bottom half down
+    tl.to(bottomRef.current.position, {
+      y: -10,
+      duration: 0.8,
+      ease: 'power2.in'
+    }, 0);
+
+    // Fade both pieces simultaneously
+    tl.to([topMaterialRef.current, bottomMaterialRef.current], {
+      opacity: 0,
+      duration: 0.6,
+      ease: 'power2.inOut'
+    }, 0.2);
+  };
+
   return (
     <group 
       position={[0, 0, 0]}
       scale={[1.5, 1.5, 1.5]}
-      onClick={onPackClick}
+      onClick={handlePackClick}
       onPointerOver={() => { document.body.style.cursor = 'pointer'; }}
       onPointerOut={() => { document.body.style.cursor = 'default'; }}
     >
-      {/* Top Half - Premium Physical Material */}
+      {/* Top Half */}
       <mesh ref={topRef} position={[0, 1.5, 0]}>
         <RoundedBox args={[2.5, 3, 0.12]} radius={0.1} smoothness={4}>
-          <meshPhysicalMaterial
+          <meshStandardMaterial
             ref={topMaterialRef}
-            color="#dcdcdc"
+            color="#c0c0c0"
             metalness={1}
-            roughness={0.15}
-            envMapIntensity={1.5}
-            clearcoat={0.8}
-            reflectivity={1}
+            roughness={0.1}
             transparent
             opacity={1}
           />
         </RoundedBox>
       </mesh>
 
-      {/* Bottom Half - Premium Physical Material */}
+      {/* Bottom Half */}
       <mesh ref={bottomRef} position={[0, -1.5, 0]}>
         <RoundedBox args={[2.5, 3, 0.12]} radius={0.1} smoothness={4}>
-          <meshPhysicalMaterial
+          <meshStandardMaterial
             ref={bottomMaterialRef}
-            color="#dcdcdc"
+            color="#c0c0c0"
             metalness={1}
-            roughness={0.15}
-            envMapIntensity={1.5}
-            clearcoat={0.8}
-            reflectivity={1}
+            roughness={0.1}
             transparent
             opacity={1}
           />
         </RoundedBox>
       </mesh>
 
-      {/* Holographic accent */}
-      <mesh position={[0, 0.3, 0.07]}>
-        <planeGeometry args={[2, 0.8]} />
-        <meshPhysicalMaterial
-          color="#ffffff"
-          metalness={1}
-          roughness={0.05}
-          iridescence={1}
-          iridescenceIOR={1.5}
-          transparent
-          opacity={0.8}
-        />
-      </mesh>
-
-      {/* Brand logo */}
-      <mesh position={[0, -0.5, 0.07]}>
-        <planeGeometry args={[1.8, 0.5]} />
-        <meshPhysicalMaterial
-          color="#5a6aff"
-          emissive="#4a5aff"
-          emissiveIntensity={0.5}
-        />
-      </mesh>
     </group>
   );
 }

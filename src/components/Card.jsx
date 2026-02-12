@@ -1,73 +1,54 @@
 // src/components/Card.jsx
-import { useRef, Suspense } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useFrame } from '@react-three/fiber';
-import { useTexture, RoundedBox } from '@react-three/drei';
+import { RoundedBox, useTexture } from '@react-three/drei';
 import * as THREE from 'three';
 
 function LoadingCard() {
   return (
     <mesh>
       <boxGeometry args={[2.5, 3.5, 0.05]} />
-      <meshPhysicalMaterial 
-        color="#ffffff" 
-        emissive="#6a4aff" 
-        emissiveIntensity={0.3}
-      />
+      <meshStandardMaterial color="#1a1a1a" />
     </mesh>
   );
 }
 
-function CardContent({ frontUrl, backUrl, frontMaterialRef, backMaterialRef }) {
-  // MANDATORY CORS FIX - Required for S3 images
-  const [frontTexture, backTexture] = useTexture(
-    [frontUrl, backUrl],
-    (textures) => {
-      textures.forEach((texture) => {
-        if (texture?.image) {
-          texture.image.crossOrigin = 'anonymous';
-        }
-      });
-      console.log('✓ Textures loaded with CORS fix');
-    }
-  );
-  
+function CardContentWithTexture({ frontTexture, backTexture, frontMaterialRef, backMaterialRef }) {
   return (
     <RoundedBox args={[2.5, 3.5, 0.05]} radius={0.1} smoothness={4}>
-      {/* Side materials */}
-      <meshPhysicalMaterial attach="material-0" color="#0a0a0a" />
-      <meshPhysicalMaterial attach="material-1" color="#0a0a0a" />
-      <meshPhysicalMaterial attach="material-2" color="#0a0a0a" />
-      <meshPhysicalMaterial attach="material-3" color="#0a0a0a" />
+      {/* Side materials - dark edges */}
+      <meshStandardMaterial attach="material-0" color="#0a0a0a" transparent={true} />
+      <meshStandardMaterial attach="material-1" color="#0a0a0a" transparent={true} />
+      <meshStandardMaterial attach="material-2" color="#0a0a0a" transparent={true} />
+      <meshStandardMaterial attach="material-3" color="#0a0a0a" transparent={true} />
       
       {/* Front face */}
-      <meshPhysicalMaterial
+      <meshStandardMaterial
         ref={frontMaterialRef}
         attach="material-4"
         map={frontTexture}
-        metalness={1}
-        roughness={0.1}
-        envMapIntensity={1.5}
-        clearcoat={1}
-        iridescence={1}
-        iridescenceIOR={1.5}
-        transparent
+        transparent={true}
+        toneMapped={false}
         opacity={1}
       />
       
       {/* Back face */}
-      <meshPhysicalMaterial
+      <meshStandardMaterial
         ref={backMaterialRef}
         attach="material-5"
         map={backTexture}
-        metalness={1}
-        roughness={0.1}
-        envMapIntensity={1.5}
-        clearcoat={1}
-        iridescence={1}
-        iridescenceIOR={1.5}
-        transparent
+        transparent={true}
+        toneMapped={false}
         opacity={1}
       />
+    </RoundedBox>
+  );
+}
+
+function CardContentFallback() {
+  return (
+    <RoundedBox args={[2.5, 3.5, 0.05]} radius={0.1} smoothness={4}>
+      <meshStandardMaterial color="#222" />
     </RoundedBox>
   );
 }
@@ -85,6 +66,26 @@ export default function Card({
   const groupRef = useRef();
   const frontMaterialRef = useRef();
   const backMaterialRef = useRef();
+  const hasValidUrls = Boolean(frontUrl) && Boolean(backUrl);
+  const [textureFailed, setTextureFailed] = useState(false);
+  const blankTexture = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR4nGNgYAAAAAMAASsJTYQAAAAASUVORK5CYII=';
+  const fUrl = frontUrl || blankTexture;
+  const bUrl = backUrl || blankTexture;
+  const [front, back] = useTexture([fUrl, bUrl], (textures) => {
+    textures.forEach(t => {
+      t.image.crossOrigin = "anonymous";
+      t.colorSpace = THREE.SRGBColorSpace;
+      t.needsUpdate = true;
+    });
+  });
+
+  useEffect(() => {
+    if (!hasValidUrls) {
+      setTextureFailed(true);
+      return;
+    }
+    setTextureFailed(false);
+  }, [frontUrl, backUrl, hasValidUrls]);
   
   const targetPosition = useRef(new THREE.Vector3(...position));
   const targetRotation = useRef(new THREE.Euler(...rotation));
@@ -96,6 +97,7 @@ export default function Card({
   useFrame(() => {
     if (!groupRef.current) return;
 
+    // Update targets based on focus state
     if (isFocused) {
       targetPosition.current.set(position[0], position[1], 2);
       targetRotation.current.set(0, 0, 0);
@@ -106,19 +108,41 @@ export default function Card({
       targetScale.current.set(1, 1, 1);
     }
 
-    groupRef.current.position.lerp(targetPosition.current, 0.06);
-    groupRef.current.rotation.x = THREE.MathUtils.lerp(groupRef.current.rotation.x, targetRotation.current.x, 0.06);
-    groupRef.current.rotation.y = THREE.MathUtils.lerp(groupRef.current.rotation.y, targetRotation.current.y, 0.06);
-    groupRef.current.rotation.z = THREE.MathUtils.lerp(groupRef.current.rotation.z, targetRotation.current.z, 0.06);
-    groupRef.current.scale.lerp(targetScale.current, 0.06);
+    // Smooth interpolation
+    groupRef.current.position.lerp(targetPosition.current, 0.08);
+    groupRef.current.rotation.x = THREE.MathUtils.lerp(
+      groupRef.current.rotation.x, 
+      targetRotation.current.x, 
+      0.08
+    );
+    groupRef.current.rotation.y = THREE.MathUtils.lerp(
+      groupRef.current.rotation.y, 
+      targetRotation.current.y, 
+      0.08
+    );
+    groupRef.current.rotation.z = THREE.MathUtils.lerp(
+      groupRef.current.rotation.z, 
+      targetRotation.current.z, 
+      0.08
+    );
+    groupRef.current.scale.lerp(targetScale.current, 0.08);
 
+    // Opacity dimming for non-focused cards
     if (frontMaterialRef.current && backMaterialRef.current) {
-      const targetOpacity = isDimmed ? 0.4 : 1.0;
+      const targetOpacity = isDimmed ? 0.5 : 1.0;
       if (frontMaterialRef.current.opacity !== undefined) {
-        frontMaterialRef.current.opacity = THREE.MathUtils.lerp(frontMaterialRef.current.opacity, targetOpacity, 0.06);
+        frontMaterialRef.current.opacity = THREE.MathUtils.lerp(
+          frontMaterialRef.current.opacity, 
+          targetOpacity, 
+          0.08
+        );
       }
       if (backMaterialRef.current.opacity !== undefined) {
-        backMaterialRef.current.opacity = THREE.MathUtils.lerp(backMaterialRef.current.opacity, targetOpacity, 0.06);
+        backMaterialRef.current.opacity = THREE.MathUtils.lerp(
+          backMaterialRef.current.opacity, 
+          targetOpacity, 
+          0.08
+        );
       }
     }
   });
@@ -138,14 +162,18 @@ export default function Card({
         document.body.style.cursor = 'default';
       }}
     >
-      <Suspense fallback={<LoadingCard />}>
-        <CardContent 
-          frontUrl={frontUrl} 
-          backUrl={backUrl}
+      {!hasValidUrls || textureFailed ? (
+        <CardContentFallback />
+      ) : front && back ? (
+        <CardContentWithTexture 
+          frontTexture={front} 
+          backTexture={back}
           frontMaterialRef={frontMaterialRef}
           backMaterialRef={backMaterialRef}
         />
-      </Suspense>
+      ) : (
+        <LoadingCard />
+      )}
     </group>
   );
 }
