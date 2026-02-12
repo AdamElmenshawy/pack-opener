@@ -22,11 +22,28 @@ export default function App() {
 
   const toProxyUrl = (url) => {
     if (!url || typeof url !== 'string') return url;
-    if (url.startsWith('/images/')) return url;
+    const bucketBase = 'https://ocs-production-public-images.s3.amazonaws.com';
+    const bucketHost = 'ocs-production-public-images.s3.amazonaws.com';
+
+    const normalizeImagePath = (value) =>
+      value
+        .replace(/^\/+/, '')
+        .replace(/^(images\/)+/, '');
+
+    const toDevOrProdUrl = (normalizedPath, search = '') => {
+      if (import.meta.env.DEV) {
+        return `/images/${normalizedPath}${search}`;
+      }
+      return `${bucketBase}/images/${normalizedPath}${search}`;
+    };
+
+    if (url.startsWith('/')) {
+      return toDevOrProdUrl(normalizeImagePath(url));
+    }
     try {
       const u = new URL(url);
-      if (u.hostname === 'ocs-production-public-images.s3.amazonaws.com') {
-        return `/images${u.pathname}`;
+      if (u.hostname === bucketHost) {
+        return toDevOrProdUrl(normalizeImagePath(u.pathname), u.search);
       }
     } catch {
       // fall through
@@ -50,13 +67,17 @@ export default function App() {
       backKeys[0] ||
       urlKeys[1];
 
-    const front = frontKey ? toProxyUrl(row[frontKey]) : null;
-    const back = backKey ? toProxyUrl(row[backKey]) : null;
+    const rawFront = frontKey ? String(row[frontKey] || '').trim() : '';
+    const rawBack = backKey ? String(row[backKey] || '').trim() : '';
+    const front = rawFront ? toProxyUrl(rawFront) : null;
+    const back = rawBack ? toProxyUrl(rawBack) : null;
 
     if (!front || !back) return null;
     return {
       ...row,
       card_id: row.card_id || row.id || row.cardId || row.name || 'unknown',
+      url_front_original: rawFront,
+      url_back_original: rawBack,
       url_front_preprocessed: front,
       url_back_preprocessed: back
     };
@@ -67,14 +88,6 @@ export default function App() {
     fetch('/adam_pokemon_render.csv')
       .then(response => {
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
-        const contentType = response.headers.get('content-type') || '';
-        if (!contentType.toLowerCase().startsWith('text/csv')) {
-          console.error(`CSV fetch error: expected text/csv, got "${contentType}"`);
-          setStatus('error');
-          setIsPackVisible(false);
-          setTexturesLoaded(false);
-          return null;
-        }
         return response.text();
       })
       .then(csvText => {
@@ -138,7 +151,9 @@ export default function App() {
     setIsPackVisible(false);
     
     const validCards = (cards || []).filter(
-      (card) => card?.url_front_preprocessed && card?.url_back_preprocessed
+      (card) =>
+        (card?.url_front_preprocessed || card?.url_front_original) &&
+        (card?.url_back_preprocessed || card?.url_back_original)
     );
     if (validCards.length === 0) {
       console.error('No valid cards available for selection.');
@@ -155,8 +170,8 @@ export default function App() {
     
     console.log('Preloading textures...');
     const preloadPromises = selected.flatMap(card => [
-      useTexture.preload(card.url_front_preprocessed),
-      useTexture.preload(card.url_back_preprocessed)
+      useTexture.preload(card.url_front_preprocessed || card.url_front_original),
+      useTexture.preload(card.url_back_preprocessed || card.url_back_original)
     ]);
 
     try {

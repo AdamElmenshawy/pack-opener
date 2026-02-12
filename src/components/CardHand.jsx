@@ -7,9 +7,10 @@ export default function CardHand({ cards }) {
   
   // Horizontal arc fan layout
   const getArcPosition = (index, total) => {
-    const radius = 10;
-    const arcSpan = Math.PI / 4; // 45 degrees
-    const angle = (index / (total - 1) - 0.5) * arcSpan;
+    const radius = 11;
+    const arcSpan = Math.PI / 3.2; // slightly wider fan
+    const denominator = Math.max(total - 1, 1);
+    const angle = (index / denominator - 0.5) * arcSpan;
     
     const x = Math.sin(angle) * radius;
     const z = -Math.cos(angle) * radius + radius - 3.5;
@@ -20,8 +21,9 @@ export default function CardHand({ cards }) {
   
   // Cards tilt inward
   const getArcRotation = (index, total) => {
-    const arcSpan = Math.PI / 4;
-    const angle = (index / (total - 1) - 0.5) * arcSpan;
+    const arcSpan = Math.PI / 3.2;
+    const denominator = Math.max(total - 1, 1);
+    const angle = (index / denominator - 0.5) * arcSpan;
     
     return [0, -angle * 0.85, 0];
   };
@@ -82,8 +84,6 @@ export default function CardHand({ cards }) {
           penumbra={1}
           intensity={7}
           color="#ffffff"
-          castShadow
-          shadow-mapSize={[2048, 2048]}
         />
       )}
     </group>

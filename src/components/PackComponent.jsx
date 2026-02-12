@@ -1,6 +1,7 @@
 // src/components/PackComponent.jsx
-import { useRef } from 'react';
-import { RoundedBox } from '@react-three/drei';
+import { useMemo, useRef } from 'react';
+import { useTexture } from '@react-three/drei';
+import * as THREE from 'three';
 import gsap from 'gsap';
 
 export default function PackComponent({ 
@@ -11,6 +12,29 @@ export default function PackComponent({
   onPackAnimationComplete 
 }) {
   const isAnimating = useRef(false);
+  const packTexture = useTexture('/gradient_pack-removebg-preview.png');
+  const PACK_HALF_HEIGHT = 3;
+  const PACK_WIDTH = 3.95;
+  const X_REPEAT = 0.62;
+  const X_OFFSET = (1 - X_REPEAT) / 2;
+
+  const { topTexture, bottomTexture } = useMemo(() => {
+    const makeSlice = (offsetY) => {
+      const texture = packTexture.clone();
+      texture.colorSpace = THREE.SRGBColorSpace;
+      texture.wrapS = THREE.ClampToEdgeWrapping;
+      texture.wrapT = THREE.ClampToEdgeWrapping;
+      texture.repeat.set(X_REPEAT, 0.5);
+      texture.offset.set(X_OFFSET, offsetY);
+      texture.needsUpdate = true;
+      return texture;
+    };
+
+    return {
+      topTexture: makeSlice(0.5),
+      bottomTexture: makeSlice(0)
+    };
+  }, [packTexture]);
 
   const handlePackClick = (e) => {
     e.stopPropagation();
@@ -62,30 +86,34 @@ export default function PackComponent({
     >
       {/* Top Half */}
       <mesh ref={topRef} position={[0, 1.5, 0]}>
-        <RoundedBox args={[2.5, 3, 0.12]} radius={0.1} smoothness={4}>
-          <meshStandardMaterial
-            ref={topMaterialRef}
-            color="#c0c0c0"
-            metalness={1}
-            roughness={0.1}
-            transparent
-            opacity={1}
-          />
-        </RoundedBox>
+        <planeGeometry args={[PACK_WIDTH, PACK_HALF_HEIGHT]} />
+        <meshStandardMaterial
+          ref={topMaterialRef}
+          map={topTexture}
+          transparent
+          alphaTest={0.03}
+          metalness={0.08}
+          roughness={0.8}
+          toneMapped={false}
+          side={THREE.DoubleSide}
+          opacity={1}
+        />
       </mesh>
 
       {/* Bottom Half */}
       <mesh ref={bottomRef} position={[0, -1.5, 0]}>
-        <RoundedBox args={[2.5, 3, 0.12]} radius={0.1} smoothness={4}>
-          <meshStandardMaterial
-            ref={bottomMaterialRef}
-            color="#c0c0c0"
-            metalness={1}
-            roughness={0.1}
-            transparent
-            opacity={1}
-          />
-        </RoundedBox>
+        <planeGeometry args={[PACK_WIDTH, PACK_HALF_HEIGHT]} />
+        <meshStandardMaterial
+          ref={bottomMaterialRef}
+          map={bottomTexture}
+          transparent
+          alphaTest={0.03}
+          metalness={0.08}
+          roughness={0.8}
+          toneMapped={false}
+          side={THREE.DoubleSide}
+          opacity={1}
+        />
       </mesh>
 
     </group>

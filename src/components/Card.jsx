@@ -1,55 +1,108 @@
 // src/components/Card.jsx
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useFrame } from '@react-three/fiber';
-import { RoundedBox, useTexture } from '@react-three/drei';
+import { RoundedBox } from '@react-three/drei';
 import * as THREE from 'three';
 
-function LoadingCard() {
+function makeRoundedAlphaMap(size = 256, radius = 24) {
+  const canvas = document.createElement('canvas');
+  canvas.width = size;
+  canvas.height = size;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return null;
+
+  ctx.clearRect(0, 0, size, size);
+  ctx.fillStyle = '#fff';
+  ctx.beginPath();
+  ctx.moveTo(radius, 0);
+  ctx.lineTo(size - radius, 0);
+  ctx.quadraticCurveTo(size, 0, size, radius);
+  ctx.lineTo(size, size - radius);
+  ctx.quadraticCurveTo(size, size, size - radius, size);
+  ctx.lineTo(radius, size);
+  ctx.quadraticCurveTo(0, size, 0, size - radius);
+  ctx.lineTo(0, radius);
+  ctx.quadraticCurveTo(0, 0, radius, 0);
+  ctx.closePath();
+  ctx.fill();
+
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.needsUpdate = true;
+  return texture;
+}
+
+function LoadingCard({ alphaMap }) {
   return (
     <mesh>
-      <boxGeometry args={[2.5, 3.5, 0.05]} />
-      <meshStandardMaterial color="#1a1a1a" />
+      <planeGeometry args={[2.5, 3.5]} />
+      <meshStandardMaterial
+        color="#2a2a2a"
+        alphaMap={alphaMap || null}
+        transparent
+        alphaTest={0.03}
+        side={THREE.DoubleSide}
+      />
     </mesh>
   );
 }
 
-function CardContentWithTexture({ frontTexture, backTexture, frontMaterialRef, backMaterialRef }) {
+function CardContentWithTexture({
+  frontTexture,
+  backTexture,
+  alphaMap,
+  frontMaterialRef,
+  backMaterialRef
+}) {
   return (
-    <RoundedBox args={[2.5, 3.5, 0.05]} radius={0.1} smoothness={4}>
-      {/* Side materials - dark edges */}
-      <meshStandardMaterial attach="material-0" color="#0a0a0a" transparent={true} />
-      <meshStandardMaterial attach="material-1" color="#0a0a0a" transparent={true} />
-      <meshStandardMaterial attach="material-2" color="#0a0a0a" transparent={true} />
-      <meshStandardMaterial attach="material-3" color="#0a0a0a" transparent={true} />
-      
-      {/* Front face */}
-      <meshStandardMaterial
-        ref={frontMaterialRef}
-        attach="material-4"
-        map={frontTexture}
-        transparent={true}
-        toneMapped={false}
-        opacity={1}
-      />
-      
-      {/* Back face */}
-      <meshStandardMaterial
-        ref={backMaterialRef}
-        attach="material-5"
-        map={backTexture}
-        transparent={true}
-        toneMapped={false}
-        opacity={1}
-      />
-    </RoundedBox>
+    <group>
+      <mesh>
+        <RoundedBox args={[2.46, 3.46, 0.05]} radius={0.12} smoothness={6}>
+          <meshStandardMaterial color="#101010" />
+        </RoundedBox>
+      </mesh>
+      <mesh position={[0, 0, 0.028]}>
+        <planeGeometry args={[2.5, 3.5]} />
+        <meshStandardMaterial
+          ref={frontMaterialRef}
+          map={frontTexture}
+          alphaMap={alphaMap || null}
+          transparent
+          alphaTest={0.03}
+          toneMapped={false}
+          side={THREE.FrontSide}
+          opacity={1}
+        />
+      </mesh>
+      <mesh position={[0, 0, -0.028]} rotation={[0, Math.PI, 0]}>
+        <planeGeometry args={[2.5, 3.5]} />
+        <meshStandardMaterial
+          ref={backMaterialRef}
+          map={backTexture}
+          alphaMap={alphaMap || null}
+          transparent
+          alphaTest={0.03}
+          toneMapped={false}
+          side={THREE.FrontSide}
+          opacity={1}
+        />
+      </mesh>
+    </group>
   );
 }
 
-function CardContentFallback() {
+function CardContentFallback({ alphaMap }) {
   return (
-    <RoundedBox args={[2.5, 3.5, 0.05]} radius={0.1} smoothness={4}>
-      <meshStandardMaterial color="#222" />
-    </RoundedBox>
+    <mesh>
+      <planeGeometry args={[2.5, 3.5]} />
+      <meshStandardMaterial
+        color="#4b4b4b"
+        emissive="#222222"
+        alphaMap={alphaMap || null}
+        transparent
+        alphaTest={0.03}
+        side={THREE.DoubleSide}
+      />
+    </mesh>
   );
 }
 
@@ -66,25 +119,71 @@ export default function Card({
   const groupRef = useRef();
   const frontMaterialRef = useRef();
   const backMaterialRef = useRef();
+  const hoverTiltRef = useRef({ x: 0, y: 0 });
+  const isDraggingRef = useRef(false);
   const hasValidUrls = Boolean(frontUrl) && Boolean(backUrl);
-  const [textureFailed, setTextureFailed] = useState(false);
-  const blankTexture = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR4nGNgYAAAAAMAASsJTYQAAAAASUVORK5CYII=';
-  const fUrl = frontUrl || blankTexture;
-  const bUrl = backUrl || blankTexture;
-  const [front, back] = useTexture([fUrl, bUrl], (textures) => {
-    textures.forEach(t => {
-      t.image.crossOrigin = "anonymous";
-      t.colorSpace = THREE.SRGBColorSpace;
-      t.needsUpdate = true;
-    });
-  });
+  const alphaMap = useMemo(() => makeRoundedAlphaMap(256, 24), []);
+  const [frontTexture, setFrontTexture] = useState(null);
+  const [backTexture, setBackTexture] = useState(null);
+  const [isLoadingTextures, setIsLoadingTextures] = useState(true);
 
   useEffect(() => {
+    return () => {
+      alphaMap?.dispose();
+    };
+  }, [alphaMap]);
+
+  useEffect(() => {
+    let cancelled = false;
+    let loadedFront = null;
+    let loadedBack = null;
+
+    const loadTexture = (url) =>
+      new Promise((resolve) => {
+        if (!url) {
+          resolve(null);
+          return;
+        }
+        const loader = new THREE.TextureLoader();
+        loader.setCrossOrigin('anonymous');
+        loader.load(
+          url,
+          (texture) => {
+            texture.colorSpace = THREE.SRGBColorSpace;
+            texture.needsUpdate = true;
+            resolve(texture);
+          },
+          undefined,
+          () => resolve(null)
+        );
+      });
+
+    setFrontTexture(null);
+    setBackTexture(null);
+    setIsLoadingTextures(Boolean(hasValidUrls));
+
     if (!hasValidUrls) {
-      setTextureFailed(true);
-      return;
+      return undefined;
     }
-    setTextureFailed(false);
+
+    Promise.all([loadTexture(frontUrl), loadTexture(backUrl)]).then(([front, back]) => {
+      if (cancelled) {
+        front?.dispose();
+        back?.dispose();
+        return;
+      }
+      loadedFront = front;
+      loadedBack = back;
+      setFrontTexture(front);
+      setBackTexture(back);
+      setIsLoadingTextures(false);
+    });
+
+    return () => {
+      cancelled = true;
+      loadedFront?.dispose();
+      loadedBack?.dispose();
+    };
   }, [frontUrl, backUrl, hasValidUrls]);
   
   const targetPosition = useRef(new THREE.Vector3(...position));
@@ -93,6 +192,12 @@ export default function Card({
   
   const isFocused = focusedIndex === index;
   const isDimmed = focusedIndex !== null && focusedIndex !== index;
+  const updateTiltFromWorldPoint = (worldPoint) => {
+    if (!groupRef.current) return;
+    const localPoint = groupRef.current.worldToLocal(worldPoint.clone());
+    hoverTiltRef.current.x = THREE.MathUtils.clamp(localPoint.x / 1.05, -1, 1);
+    hoverTiltRef.current.y = THREE.MathUtils.clamp(localPoint.y / 1.45, -1, 1);
+  };
 
   useFrame(() => {
     if (!groupRef.current) return;
@@ -100,7 +205,15 @@ export default function Card({
     // Update targets based on focus state
     if (isFocused) {
       targetPosition.current.set(position[0], position[1], 2);
-      targetRotation.current.set(0, 0, 0);
+      if (isDraggingRef.current) {
+        targetRotation.current.set(
+          -hoverTiltRef.current.y * 0.28,
+          hoverTiltRef.current.x * 0.38,
+          0
+        );
+      } else {
+        targetRotation.current.set(0, 0, 0);
+      }
       targetScale.current.set(1.3, 1.3, 1.3);
     } else {
       targetPosition.current.set(position[0], position[1], position[2]);
@@ -152,27 +265,54 @@ export default function Card({
       ref={groupRef}
       position={position}
       rotation={rotation}
-      onPointerOver={(e) => {
+      onPointerEnter={(e) => {
         e.stopPropagation();
         onHover(index);
         document.body.style.cursor = 'pointer';
       }}
-      onPointerOut={() => {
+      onPointerDown={(e) => {
+        e.stopPropagation();
+        onHover(index);
+        isDraggingRef.current = true;
+        updateTiltFromWorldPoint(e.point);
+        e.target.setPointerCapture?.(e.pointerId);
+        document.body.style.cursor = 'grabbing';
+      }}
+      onPointerMove={(e) => {
+        if (!isDraggingRef.current) return;
+        e.stopPropagation();
+        updateTiltFromWorldPoint(e.point);
+      }}
+      onPointerUp={(e) => {
+        e.stopPropagation();
+        isDraggingRef.current = false;
+        hoverTiltRef.current.x = 0;
+        hoverTiltRef.current.y = 0;
+        e.target.releasePointerCapture?.(e.pointerId);
+        document.body.style.cursor = 'pointer';
+      }}
+      onPointerLeave={() => {
+        if (isDraggingRef.current) return;
+        hoverTiltRef.current.x = 0;
+        hoverTiltRef.current.y = 0;
         onHoverOut();
         document.body.style.cursor = 'default';
       }}
     >
-      {!hasValidUrls || textureFailed ? (
+      {!hasValidUrls ? (
         <CardContentFallback />
-      ) : front && back ? (
+      ) : isLoadingTextures ? (
+        <LoadingCard alphaMap={alphaMap} />
+      ) : frontTexture && backTexture ? (
         <CardContentWithTexture 
-          frontTexture={front} 
-          backTexture={back}
+          frontTexture={frontTexture} 
+          backTexture={backTexture}
+          alphaMap={alphaMap}
           frontMaterialRef={frontMaterialRef}
           backMaterialRef={backMaterialRef}
         />
       ) : (
-        <LoadingCard />
+        <CardContentFallback alphaMap={alphaMap} />
       )}
     </group>
   );
