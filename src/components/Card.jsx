@@ -4,6 +4,11 @@ import { useFrame } from '@react-three/fiber';
 import { RoundedBox } from '@react-three/drei';
 import * as THREE from 'three';
 
+const CARD_WIDTH = 2.5;
+const CARD_HEIGHT = 3.5;
+const CARD_DEPTH = 0.05;
+const CARD_SHELL_INSET = 0.04;
+
 function makeRoundedAlphaMap(size = 256, radius = 24) {
   const canvas = document.createElement('canvas');
   canvas.width = size;
@@ -34,7 +39,7 @@ function makeRoundedAlphaMap(size = 256, radius = 24) {
 function LoadingCard({ alphaMap }) {
   return (
     <mesh>
-      <planeGeometry args={[2.5, 3.5]} />
+      <planeGeometry args={[CARD_WIDTH, CARD_HEIGHT]} />
       <meshStandardMaterial
         color="#2a2a2a"
         alphaMap={alphaMap || null}
@@ -56,12 +61,16 @@ function CardContentWithTexture({
   return (
     <group>
       <mesh>
-        <RoundedBox args={[2.46, 3.46, 0.05]} radius={0.12} smoothness={6}>
+        <RoundedBox
+          args={[CARD_WIDTH - CARD_SHELL_INSET, CARD_HEIGHT - CARD_SHELL_INSET, CARD_DEPTH]}
+          radius={0.12}
+          smoothness={6}
+        >
           <meshStandardMaterial color="#101010" />
         </RoundedBox>
       </mesh>
       <mesh position={[0, 0, 0.028]}>
-        <planeGeometry args={[2.5, 3.5]} />
+        <planeGeometry args={[CARD_WIDTH, CARD_HEIGHT]} />
         <meshStandardMaterial
           ref={frontMaterialRef}
           map={frontTexture}
@@ -74,7 +83,7 @@ function CardContentWithTexture({
         />
       </mesh>
       <mesh position={[0, 0, -0.028]} rotation={[0, Math.PI, 0]}>
-        <planeGeometry args={[2.5, 3.5]} />
+        <planeGeometry args={[CARD_WIDTH, CARD_HEIGHT]} />
         <meshStandardMaterial
           ref={backMaterialRef}
           map={backTexture}
@@ -93,7 +102,7 @@ function CardContentWithTexture({
 function CardContentFallback({ alphaMap }) {
   return (
     <mesh>
-      <planeGeometry args={[2.5, 3.5]} />
+      <planeGeometry args={[CARD_WIDTH, CARD_HEIGHT]} />
       <meshStandardMaterial
         color="#4b4b4b"
         emissive="#222222"
@@ -114,13 +123,20 @@ export default function Card({
   index, 
   focusedIndex, 
   onHover, 
-  onHoverOut 
+  onHoverOut,
+  enableDragTilt = true,
+  enableFocusLift = true,
+  enableDimming = true,
+  interactive = true,
+  baseScale = 1,
+  onCardTap = null
 }) {
   const groupRef = useRef();
   const frontMaterialRef = useRef();
   const backMaterialRef = useRef();
   const hoverTiltRef = useRef({ x: 0, y: 0 });
   const isDraggingRef = useRef(false);
+  const isPointerDownRef = useRef(false);
   const hasValidUrls = Boolean(frontUrl) && Boolean(backUrl);
   const alphaMap = useMemo(() => makeRoundedAlphaMap(256, 24), []);
   const [frontTexture, setFrontTexture] = useState(null);
@@ -188,15 +204,15 @@ export default function Card({
   
   const targetPosition = useRef(new THREE.Vector3(...position));
   const targetRotation = useRef(new THREE.Euler(...rotation));
-  const targetScale = useRef(new THREE.Vector3(1, 1, 1));
+  const targetScale = useRef(new THREE.Vector3(baseScale, baseScale, baseScale));
   
   const isFocused = focusedIndex === index;
-  const isDimmed = focusedIndex !== null && focusedIndex !== index;
+  const isDimmed = enableDimming && focusedIndex !== null && focusedIndex !== index;
   const updateTiltFromWorldPoint = (worldPoint) => {
     if (!groupRef.current) return;
     const localPoint = groupRef.current.worldToLocal(worldPoint.clone());
-    hoverTiltRef.current.x = THREE.MathUtils.clamp(localPoint.x / 1.05, -1, 1);
-    hoverTiltRef.current.y = THREE.MathUtils.clamp(localPoint.y / 1.45, -1, 1);
+    hoverTiltRef.current.x = THREE.MathUtils.clamp(localPoint.x / 0.7, -1, 1);
+    hoverTiltRef.current.y = THREE.MathUtils.clamp(localPoint.y / 0.95, -1, 1);
   };
 
   useFrame(() => {
@@ -204,21 +220,29 @@ export default function Card({
 
     // Update targets based on focus state
     if (isFocused) {
-      targetPosition.current.set(position[0], position[1], 2);
-      if (isDraggingRef.current) {
+      if (enableFocusLift) {
+        targetPosition.current.set(position[0], position[1], 2);
+        targetScale.current.set(baseScale * 1.3, baseScale * 1.3, baseScale * 1.3);
+      } else {
+        targetPosition.current.set(position[0], position[1], position[2]);
+        targetScale.current.set(baseScale, baseScale, baseScale);
+      }
+
+      if (isDraggingRef.current && enableDragTilt) {
         targetRotation.current.set(
-          -hoverTiltRef.current.y * 0.28,
-          hoverTiltRef.current.x * 0.38,
+          -hoverTiltRef.current.y * 0.55,
+          hoverTiltRef.current.x * 1.65,
           0
         );
-      } else {
+      } else if (enableFocusLift) {
         targetRotation.current.set(0, 0, 0);
+      } else {
+        targetRotation.current.set(rotation[0], rotation[1], rotation[2]);
       }
-      targetScale.current.set(1.3, 1.3, 1.3);
     } else {
       targetPosition.current.set(position[0], position[1], position[2]);
       targetRotation.current.set(rotation[0], rotation[1], rotation[2]);
-      targetScale.current.set(1, 1, 1);
+      targetScale.current.set(baseScale, baseScale, baseScale);
     }
 
     // Smooth interpolation
@@ -238,7 +262,8 @@ export default function Card({
       targetRotation.current.z, 
       0.08
     );
-    groupRef.current.scale.lerp(targetScale.current, 0.08);
+    const isZoomingOut = groupRef.current.scale.x > targetScale.current.x;
+    groupRef.current.scale.lerp(targetScale.current, isZoomingOut ? 0.05 : 0.08);
 
     // Opacity dimming for non-focused cards
     if (frontMaterialRef.current && backMaterialRef.current) {
@@ -265,33 +290,48 @@ export default function Card({
       ref={groupRef}
       position={position}
       rotation={rotation}
+      raycast={interactive ? undefined : () => null}
       onPointerEnter={(e) => {
+        if (!interactive) return;
         e.stopPropagation();
         onHover(index);
         document.body.style.cursor = 'pointer';
       }}
       onPointerDown={(e) => {
+        if (!interactive) return;
         e.stopPropagation();
         onHover(index);
-        isDraggingRef.current = true;
-        updateTiltFromWorldPoint(e.point);
-        e.target.setPointerCapture?.(e.pointerId);
+        isPointerDownRef.current = true;
+        if (enableDragTilt) {
+          isDraggingRef.current = true;
+          updateTiltFromWorldPoint(e.point);
+          e.target.setPointerCapture?.(e.pointerId);
+        }
         document.body.style.cursor = 'grabbing';
       }}
       onPointerMove={(e) => {
-        if (!isDraggingRef.current) return;
+        if (!interactive || !enableDragTilt || !isDraggingRef.current) return;
         e.stopPropagation();
         updateTiltFromWorldPoint(e.point);
       }}
       onPointerUp={(e) => {
+        if (!interactive || !isPointerDownRef.current) return;
         e.stopPropagation();
+        if (typeof onCardTap === 'function') {
+          onCardTap(index);
+        }
+        isPointerDownRef.current = false;
         isDraggingRef.current = false;
         hoverTiltRef.current.x = 0;
         hoverTiltRef.current.y = 0;
-        e.target.releasePointerCapture?.(e.pointerId);
+        if (enableDragTilt) {
+          e.target.releasePointerCapture?.(e.pointerId);
+        }
         document.body.style.cursor = 'pointer';
       }}
       onPointerLeave={() => {
+        if (!interactive) return;
+        isPointerDownRef.current = false;
         if (isDraggingRef.current) return;
         hoverTiltRef.current.x = 0;
         hoverTiltRef.current.y = 0;

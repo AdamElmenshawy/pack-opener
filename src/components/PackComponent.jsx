@@ -13,26 +13,31 @@ export default function PackComponent({
 }) {
   const isAnimating = useRef(false);
   const packTexture = useTexture('/gradient_pack-removebg-preview.png');
-  const PACK_HALF_HEIGHT = 3;
+  const PACK_TOTAL_HEIGHT = 6;
   const PACK_WIDTH = 3.95;
+  const TOP_RATIO = 0.18;
+  const TOP_HEIGHT = PACK_TOTAL_HEIGHT * TOP_RATIO;
+  const BOTTOM_HEIGHT = PACK_TOTAL_HEIGHT - TOP_HEIGHT;
+  const TOP_CENTER_Y = PACK_TOTAL_HEIGHT / 2 - TOP_HEIGHT / 2;
+  const BOTTOM_CENTER_Y = -PACK_TOTAL_HEIGHT / 2 + BOTTOM_HEIGHT / 2;
   const X_REPEAT = 0.62;
   const X_OFFSET = (1 - X_REPEAT) / 2;
 
   const { topTexture, bottomTexture } = useMemo(() => {
-    const makeSlice = (offsetY) => {
+    const makeSlice = (offsetY, repeatY) => {
       const texture = packTexture.clone();
       texture.colorSpace = THREE.SRGBColorSpace;
       texture.wrapS = THREE.ClampToEdgeWrapping;
       texture.wrapT = THREE.ClampToEdgeWrapping;
-      texture.repeat.set(X_REPEAT, 0.5);
+      texture.repeat.set(X_REPEAT, repeatY);
       texture.offset.set(X_OFFSET, offsetY);
       texture.needsUpdate = true;
       return texture;
     };
 
     return {
-      topTexture: makeSlice(0.5),
-      bottomTexture: makeSlice(0)
+      topTexture: makeSlice(1 - TOP_RATIO, TOP_RATIO),
+      bottomTexture: makeSlice(0, 1 - TOP_RATIO)
     };
   }, [packTexture]);
 
@@ -85,8 +90,8 @@ export default function PackComponent({
       onPointerOut={() => { document.body.style.cursor = 'default'; }}
     >
       {/* Top Half */}
-      <mesh ref={topRef} position={[0, 1.5, 0]}>
-        <planeGeometry args={[PACK_WIDTH, PACK_HALF_HEIGHT]} />
+      <mesh ref={topRef} position={[0, TOP_CENTER_Y, 0]}>
+        <planeGeometry args={[PACK_WIDTH, TOP_HEIGHT]} />
         <meshStandardMaterial
           ref={topMaterialRef}
           map={topTexture}
@@ -101,8 +106,8 @@ export default function PackComponent({
       </mesh>
 
       {/* Bottom Half */}
-      <mesh ref={bottomRef} position={[0, -1.5, 0]}>
-        <planeGeometry args={[PACK_WIDTH, PACK_HALF_HEIGHT]} />
+      <mesh ref={bottomRef} position={[0, BOTTOM_CENTER_Y, 0]}>
+        <planeGeometry args={[PACK_WIDTH, BOTTOM_HEIGHT]} />
         <meshStandardMaterial
           ref={bottomMaterialRef}
           map={bottomTexture}

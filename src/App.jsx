@@ -8,6 +8,14 @@ import gsap from 'gsap';
 export default function App() {
   const [allCards, setAllCards] = useState([]);
   const [currentHand, setCurrentHand] = useState([]);
+  const [stackCards, setStackCards] = useState([]);
+  const [collageCards, setCollageCards] = useState([]);
+  const [stackCycles, setStackCycles] = useState(0);
+  const [stackAnimating, setStackAnimating] = useState(false);
+  const [stackAnimProgress, setStackAnimProgress] = useState(0);
+  const [phaseBlend, setPhaseBlend] = useState(0);
+  const [movingCard, setMovingCard] = useState(null);
+  const [movingToIndex, setMovingToIndex] = useState(-1);
   const [status, setStatus] = useState('loading');
   const [isPackVisible, setIsPackVisible] = useState(false);
   const [texturesLoaded, setTexturesLoaded] = useState(false);
@@ -19,6 +27,18 @@ export default function App() {
   const bottomMaterialRef = useRef();
   const hasLoggedHeaders = useRef(false);
   const clickTextRef = useRef(null);
+  const stackTweenRef = useRef(null);
+  const phaseTweenRef = useRef(null);
+
+  const stopStackTween = () => {
+    stackTweenRef.current?.kill();
+    stackTweenRef.current = null;
+  };
+
+  const stopPhaseTween = () => {
+    phaseTweenRef.current?.kill();
+    phaseTweenRef.current = null;
+  };
 
   const toProxyUrl = (url) => {
     if (!url || typeof url !== 'string') return url;
@@ -167,6 +187,16 @@ export default function App() {
     
     console.log('Selected:', selected.map(c => c.card_id));
     setCurrentHand(selected);
+    setStackCards(selected);
+    setCollageCards([]);
+    setStackCycles(0);
+    setStackAnimating(false);
+    setStackAnimProgress(0);
+    setPhaseBlend(0);
+    setMovingCard(null);
+    setMovingToIndex(-1);
+    stopStackTween();
+    stopPhaseTween();
     
     console.log('Preloading textures...');
     const preloadPromises = selected.flatMap(card => [
@@ -189,10 +219,74 @@ export default function App() {
   };
 
   const handlePackAnimationComplete = () => {
-    console.log('Pack animation complete - revealing cards');
+    console.log('Pack animation complete - showing stack interaction');
     setIsPackVisible(false);
-    setStatus('revealed');
+    setStatus('stacked');
   };
+
+  const handleCycleTopCard = () => {
+    if (status !== 'stacked' || stackAnimating || stackCards.length === 0) {
+      return;
+    }
+    const topCard = stackCards[0];
+    const targetCollageIndex = collageCards.length;
+    setStackAnimating(true);
+    setStackAnimProgress(0);
+    setMovingCard(topCard);
+    setMovingToIndex(targetCollageIndex);
+
+    stopStackTween();
+    const motion = { t: 0 };
+    stackTweenRef.current = gsap.to(motion, {
+      t: 1,
+      duration: 0.95,
+      ease: 'sine.inOut',
+      onUpdate: () => {
+        setStackAnimProgress(motion.t);
+      },
+      onComplete: () => {
+        setStackCards((prev) => prev.slice(1));
+        setCollageCards((prev) => [...prev, topCard]);
+        setStackCycles((prev) => prev + 1);
+        setStackAnimProgress(0);
+        setMovingCard(null);
+        setMovingToIndex(-1);
+        setStackAnimating(false);
+        stackTweenRef.current = null;
+      }
+    });
+  };
+
+  const startPhaseTransition = () => {
+    if (status !== 'stacked') return;
+    stopPhaseTween();
+    setStatus('transitioning');
+    setPhaseBlend(0);
+    const motion = { t: 0 };
+    phaseTweenRef.current = gsap.to(motion, {
+      t: 1,
+      duration: 1.1,
+      ease: 'sine.inOut',
+      onUpdate: () => {
+        setPhaseBlend(motion.t);
+      },
+      onComplete: () => {
+        setPhaseBlend(1);
+        setStatus('revealed');
+        phaseTweenRef.current = null;
+      }
+    });
+  };
+
+  useEffect(() => {
+    if (
+      status === 'stacked' &&
+      currentHand.length > 0 &&
+      stackCycles >= currentHand.length
+    ) {
+      startPhaseTransition();
+    }
+  }, [status, stackCycles, currentHand.length]);
 
   useEffect(() => {
     if (status !== 'pack' || !clickTextRef.current) return;
@@ -203,6 +297,13 @@ export default function App() {
     });
     return () => tween.kill();
   }, [status]);
+
+  useEffect(() => {
+    return () => {
+      stopStackTween();
+      stopPhaseTween();
+    };
+  }, []);
 
   return (
     <div style={{ 
@@ -215,6 +316,13 @@ export default function App() {
       <Suspense fallback={null}>
         <Experience
           cards={currentHand}
+          stackCards={stackCards}
+          collageCards={collageCards}
+          movingCard={movingCard}
+          movingToIndex={movingToIndex}
+          stackAnimProgress={stackAnimProgress}
+          stackAnimating={stackAnimating}
+          phaseBlend={phaseBlend}
           status={status}
           isPackVisible={isPackVisible}
           texturesLoaded={texturesLoaded}
@@ -223,6 +331,7 @@ export default function App() {
           topMaterialRef={topMaterialRef}
           bottomMaterialRef={bottomMaterialRef}
           onPackAnimationComplete={handlePackAnimationComplete}
+          onCycleTopCard={handleCycleTopCard}
         />
       </Suspense>
 

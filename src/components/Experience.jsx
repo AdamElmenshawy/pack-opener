@@ -4,9 +4,18 @@ import { Canvas } from '@react-three/fiber';
 import * as THREE from 'three';
 import CardHand from './CardHand';
 import PackComponent from './PackComponent';
+import StackDeck from './StackDeck';
+import TransitionFan from './TransitionFan';
 
 export default function Experience({ 
   cards, 
+  stackCards,
+  collageCards,
+  movingCard,
+  movingToIndex,
+  stackAnimProgress,
+  stackAnimating,
+  phaseBlend,
   status, 
   isPackVisible, 
   texturesLoaded, 
@@ -14,8 +23,16 @@ export default function Experience({
   bottomRef, 
   topMaterialRef, 
   bottomMaterialRef, 
-  onPackAnimationComplete 
+  onPackAnimationComplete,
+  onCycleTopCard
 }) {
+  const isPhaseTransition = status === 'transitioning';
+  const rawBlend = isPhaseTransition ? phaseBlend : status === 'revealed' ? 1 : 0;
+  const blend = rawBlend * rawBlend * (3 - 2 * rawBlend);
+  const showStack = status === 'stacked' && texturesLoaded;
+  const showTransition = isPhaseTransition && texturesLoaded;
+  const showHand = status === 'revealed' && texturesLoaded;
+
   return (
     <Canvas 
       camera={{ position: [0, 0, 10], fov: 60 }}
@@ -39,7 +56,24 @@ export default function Experience({
         )}
         
         {/* Card Hand Display */}
-        {status === 'revealed' && texturesLoaded && (
+        {showStack && (
+          <StackDeck
+            cards={stackCards}
+            collageCards={collageCards}
+            onCycleTopCard={onCycleTopCard}
+            movingCard={movingCard}
+            movingToIndex={movingToIndex}
+            stackAnimProgress={stackAnimProgress}
+            isAnimating={stackAnimating}
+          />
+        )}
+
+        {showTransition && (
+          <TransitionFan cards={cards} sourceCards={collageCards} blend={blend} />
+        )}
+
+        {/* Card Hand Display */}
+        {showHand && (
           <Suspense fallback={null}>
             <CardHand cards={cards} />
           </Suspense>
