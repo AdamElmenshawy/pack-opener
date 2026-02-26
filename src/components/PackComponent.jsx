@@ -9,10 +9,12 @@ export default function PackComponent({
   bottomRef, 
   topMaterialRef, 
   bottomMaterialRef, 
-  onPackAnimationComplete 
+  onPackAnimationComplete,
+  packTextureUrl = '/gradient_pack-removebg-preview.png',
+  onCursorChange = () => {}
 }) {
   const isAnimating = useRef(false);
-  const packTexture = useTexture('/gradient_pack-removebg-preview.png');
+  const packTexture = useTexture(packTextureUrl);
   const PACK_TOTAL_HEIGHT = 6;
   const PACK_WIDTH = 3.95;
   const TOP_RATIO = 0.18;
@@ -39,7 +41,7 @@ export default function PackComponent({
       topTexture: makeSlice(1 - TOP_RATIO, TOP_RATIO),
       bottomTexture: makeSlice(0, 1 - TOP_RATIO)
     };
-  }, [packTexture]);
+  }, [packTexture, X_OFFSET]);
 
   const handlePackClick = (e) => {
     e.stopPropagation();
@@ -86,8 +88,12 @@ export default function PackComponent({
       position={[0, 0, 0]}
       scale={[1.5, 1.5, 1.5]}
       onClick={handlePackClick}
-      onPointerOver={() => { document.body.style.cursor = 'pointer'; }}
-      onPointerOut={() => { document.body.style.cursor = 'default'; }}
+      onPointerOver={() => {
+        onCursorChange('pointer');
+      }}
+      onPointerOut={() => {
+        onCursorChange('default');
+      }}
     >
       {/* Top Half */}
       <mesh ref={topRef} position={[0, TOP_CENTER_Y, 0]}>

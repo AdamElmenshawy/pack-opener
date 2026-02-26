@@ -24,7 +24,9 @@ export default function Experience({
   topMaterialRef, 
   bottomMaterialRef, 
   onPackAnimationComplete,
-  onCycleTopCard
+  onCycleTopCard,
+  onCursorChange,
+  packTextureUrl
 }) {
   const isPhaseTransition = status === 'transitioning';
   const rawBlend = isPhaseTransition ? phaseBlend : status === 'revealed' ? 1 : 0;
@@ -36,7 +38,15 @@ export default function Experience({
   return (
     <Canvas 
       camera={{ position: [0, 0, 10], fov: 60 }}
-      gl={{ toneMapping: 0, toneMappingExposure: 1.0 }}
+      dpr={[1, 1.5]}
+      frameloop="always"
+      gl={{
+        antialias: true,
+        powerPreference: 'high-performance',
+        toneMapping: 0,
+        toneMappingExposure: 1.0
+      }}
+      performance={{ min: 0.6 }}
       scene={{ background: new THREE.Color('#000000') }}
     >
       <Suspense fallback={null}>
@@ -52,6 +62,8 @@ export default function Experience({
             topMaterialRef={topMaterialRef}
             bottomMaterialRef={bottomMaterialRef}
             onPackAnimationComplete={onPackAnimationComplete}
+            onCursorChange={onCursorChange}
+            packTextureUrl={packTextureUrl}
           />
         )}
         
@@ -65,6 +77,7 @@ export default function Experience({
             movingToIndex={movingToIndex}
             stackAnimProgress={stackAnimProgress}
             isAnimating={stackAnimating}
+            onCursorChange={onCursorChange}
           />
         )}
 
@@ -75,7 +88,7 @@ export default function Experience({
         {/* Card Hand Display */}
         {showHand && (
           <Suspense fallback={null}>
-            <CardHand cards={cards} />
+            <CardHand cards={cards} onCursorChange={onCursorChange} />
           </Suspense>
         )}
         

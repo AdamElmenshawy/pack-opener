@@ -1,13 +1,22 @@
 // src/components/Card.jsx
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { memo, useMemo, useRef } from 'react';
 import { useFrame } from '@react-three/fiber';
-import { RoundedBox } from '@react-three/drei';
+import { Html, RoundedBox, useTexture } from '@react-three/drei';
 import * as THREE from 'three';
 
 const CARD_WIDTH = 2.5;
 const CARD_HEIGHT = 3.5;
 const CARD_DEPTH = 0.05;
 const CARD_SHELL_INSET = 0.04;
+const POSITION_SMOOTHING = 14;
+const ROTATION_SMOOTHING = 14;
+const SCALE_SMOOTHING_IN = 14;
+const SCALE_SMOOTHING_OUT = 8;
+const OPACITY_SMOOTHING = 12;
+const TRANSPARENT_PIXEL =
+  'data:image/gif;base64,R0lGODlhAQABAAAAACwAAAAAAQABAAA=';
+
+let sharedAlphaMap = null;
 
 function makeRoundedAlphaMap(size = 256, radius = 24) {
   const canvas = document.createElement('canvas');
@@ -32,23 +41,16 @@ function makeRoundedAlphaMap(size = 256, radius = 24) {
   ctx.fill();
 
   const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.NoColorSpace;
   texture.needsUpdate = true;
   return texture;
 }
 
-function LoadingCard({ alphaMap }) {
-  return (
-    <mesh>
-      <planeGeometry args={[CARD_WIDTH, CARD_HEIGHT]} />
-      <meshStandardMaterial
-        color="#2a2a2a"
-        alphaMap={alphaMap || null}
-        transparent
-        alphaTest={0.03}
-        side={THREE.DoubleSide}
-      />
-    </mesh>
-  );
+function getRoundedAlphaMap() {
+  if (!sharedAlphaMap) {
+    sharedAlphaMap = makeRoundedAlphaMap(256, 24);
+  }
+  return sharedAlphaMap;
 }
 
 function CardContentWithTexture({
@@ -99,7 +101,7 @@ function CardContentWithTexture({
   );
 }
 
-function CardContentFallback({ alphaMap }) {
+function CardContentFallback({ alphaMap = null }) {
   return (
     <mesh>
       <planeGeometry args={[CARD_WIDTH, CARD_HEIGHT]} />
@@ -115,7 +117,56 @@ function CardContentFallback({ alphaMap }) {
   );
 }
 
-export default function Card({ 
+function PricePanel({ marketPrice, instantBuyBackPrice }) {
+  const marketValue = String(marketPrice ?? '').trim();
+  const buyBackValue = String(instantBuyBackPrice ?? '').trim();
+
+  return (
+    <Html
+      center
+      position={[0, -CARD_HEIGHT / 2 - 0.46, 0.04]}
+      style={{ pointerEvents: 'none' }}
+    >
+      <div
+        style={{
+          width: '170px',
+          border: '1px solid rgba(255,255,255,0.25)',
+          borderRadius: '10px',
+          padding: '8px 10px',
+          background: 'rgba(0,0,0,0.58)',
+          color: '#fff',
+          fontSize: '11px',
+          fontFamily: 'system-ui',
+          lineHeight: 1.35
+        }}
+      >
+        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '5px' }}>
+          <span>Market Price</span>
+          <span style={{ minWidth: '40px', textAlign: 'right' }}>{marketValue || '\u00A0'}</span>
+        </div>
+        <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+          <span>Instant Buy Back</span>
+          <span style={{ minWidth: '40px', textAlign: 'right' }}>{buyBackValue || '\u00A0'}</span>
+        </div>
+      </div>
+    </Html>
+  );
+}
+
+function getDampFactor(speed, delta) {
+  return 1 - Math.exp(-speed * delta);
+}
+
+function vectorsEqual(a, b) {
+  if (a === b) return true;
+  if (!Array.isArray(a) || !Array.isArray(b) || a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i += 1) {
+    if (Math.abs(a[i] - b[i]) > 1e-6) return false;
+  }
+  return true;
+}
+
+function Card({
   frontUrl, 
   backUrl, 
   position, 
@@ -129,7 +180,11 @@ export default function Card({
   enableDimming = true,
   interactive = true,
   baseScale = 1,
-  onCardTap = null
+  onCardTap = null,
+  showPricePanel = false,
+  marketPrice = '',
+  instantBuyBackPrice = '',
+  onCursorChange = () => {}
 }) {
   const groupRef = useRef();
   const frontMaterialRef = useRef();
@@ -138,69 +193,13 @@ export default function Card({
   const isDraggingRef = useRef(false);
   const isPointerDownRef = useRef(false);
   const hasValidUrls = Boolean(frontUrl) && Boolean(backUrl);
-  const alphaMap = useMemo(() => makeRoundedAlphaMap(256, 24), []);
-  const [frontTexture, setFrontTexture] = useState(null);
-  const [backTexture, setBackTexture] = useState(null);
-  const [isLoadingTextures, setIsLoadingTextures] = useState(true);
-
-  useEffect(() => {
-    return () => {
-      alphaMap?.dispose();
-    };
-  }, [alphaMap]);
-
-  useEffect(() => {
-    let cancelled = false;
-    let loadedFront = null;
-    let loadedBack = null;
-
-    const loadTexture = (url) =>
-      new Promise((resolve) => {
-        if (!url) {
-          resolve(null);
-          return;
-        }
-        const loader = new THREE.TextureLoader();
-        loader.setCrossOrigin('anonymous');
-        loader.load(
-          url,
-          (texture) => {
-            texture.colorSpace = THREE.SRGBColorSpace;
-            texture.needsUpdate = true;
-            resolve(texture);
-          },
-          undefined,
-          () => resolve(null)
-        );
-      });
-
-    setFrontTexture(null);
-    setBackTexture(null);
-    setIsLoadingTextures(Boolean(hasValidUrls));
-
-    if (!hasValidUrls) {
-      return undefined;
-    }
-
-    Promise.all([loadTexture(frontUrl), loadTexture(backUrl)]).then(([front, back]) => {
-      if (cancelled) {
-        front?.dispose();
-        back?.dispose();
-        return;
-      }
-      loadedFront = front;
-      loadedBack = back;
-      setFrontTexture(front);
-      setBackTexture(back);
-      setIsLoadingTextures(false);
-    });
-
-    return () => {
-      cancelled = true;
-      loadedFront?.dispose();
-      loadedBack?.dispose();
-    };
-  }, [frontUrl, backUrl, hasValidUrls]);
+  const alphaMap = useMemo(() => getRoundedAlphaMap(), []);
+  const [frontTextureRaw, backTextureRaw] = useTexture([
+    frontUrl || TRANSPARENT_PIXEL,
+    backUrl || TRANSPARENT_PIXEL
+  ]);
+  const frontTexture = frontTextureRaw || null;
+  const backTexture = backTextureRaw || null;
   
   const targetPosition = useRef(new THREE.Vector3(...position));
   const targetRotation = useRef(new THREE.Euler(...rotation));
@@ -215,7 +214,7 @@ export default function Card({
     hoverTiltRef.current.y = THREE.MathUtils.clamp(localPoint.y / 0.95, -1, 1);
   };
 
-  useFrame(() => {
+  useFrame((_, delta) => {
     if (!groupRef.current) return;
 
     // Update targets based on focus state
@@ -246,24 +245,30 @@ export default function Card({
     }
 
     // Smooth interpolation
-    groupRef.current.position.lerp(targetPosition.current, 0.08);
+    const positionDamp = getDampFactor(POSITION_SMOOTHING, delta);
+    const rotationDamp = getDampFactor(ROTATION_SMOOTHING, delta);
+    groupRef.current.position.lerp(targetPosition.current, positionDamp);
     groupRef.current.rotation.x = THREE.MathUtils.lerp(
       groupRef.current.rotation.x, 
       targetRotation.current.x, 
-      0.08
+      rotationDamp
     );
     groupRef.current.rotation.y = THREE.MathUtils.lerp(
       groupRef.current.rotation.y, 
       targetRotation.current.y, 
-      0.08
+      rotationDamp
     );
     groupRef.current.rotation.z = THREE.MathUtils.lerp(
       groupRef.current.rotation.z, 
       targetRotation.current.z, 
-      0.08
+      rotationDamp
     );
     const isZoomingOut = groupRef.current.scale.x > targetScale.current.x;
-    groupRef.current.scale.lerp(targetScale.current, isZoomingOut ? 0.05 : 0.08);
+    const scaleDamp = getDampFactor(
+      isZoomingOut ? SCALE_SMOOTHING_OUT : SCALE_SMOOTHING_IN,
+      delta
+    );
+    groupRef.current.scale.lerp(targetScale.current, scaleDamp);
 
     // Opacity dimming for non-focused cards
     if (frontMaterialRef.current && backMaterialRef.current) {
@@ -272,14 +277,14 @@ export default function Card({
         frontMaterialRef.current.opacity = THREE.MathUtils.lerp(
           frontMaterialRef.current.opacity, 
           targetOpacity, 
-          0.08
+          getDampFactor(OPACITY_SMOOTHING, delta)
         );
       }
       if (backMaterialRef.current.opacity !== undefined) {
         backMaterialRef.current.opacity = THREE.MathUtils.lerp(
           backMaterialRef.current.opacity, 
           targetOpacity, 
-          0.08
+          getDampFactor(OPACITY_SMOOTHING, delta)
         );
       }
     }
@@ -295,7 +300,7 @@ export default function Card({
         if (!interactive) return;
         e.stopPropagation();
         onHover(index);
-        document.body.style.cursor = 'pointer';
+        onCursorChange('pointer');
       }}
       onPointerDown={(e) => {
         if (!interactive) return;
@@ -307,7 +312,7 @@ export default function Card({
           updateTiltFromWorldPoint(e.point);
           e.target.setPointerCapture?.(e.pointerId);
         }
-        document.body.style.cursor = 'grabbing';
+        onCursorChange('grabbing');
       }}
       onPointerMove={(e) => {
         if (!interactive || !enableDragTilt || !isDraggingRef.current) return;
@@ -327,7 +332,7 @@ export default function Card({
         if (enableDragTilt) {
           e.target.releasePointerCapture?.(e.pointerId);
         }
-        document.body.style.cursor = 'pointer';
+        onCursorChange('pointer');
       }}
       onPointerLeave={() => {
         if (!interactive) return;
@@ -336,13 +341,11 @@ export default function Card({
         hoverTiltRef.current.x = 0;
         hoverTiltRef.current.y = 0;
         onHoverOut();
-        document.body.style.cursor = 'default';
+        onCursorChange('default');
       }}
     >
       {!hasValidUrls ? (
         <CardContentFallback />
-      ) : isLoadingTextures ? (
-        <LoadingCard alphaMap={alphaMap} />
       ) : frontTexture && backTexture ? (
         <CardContentWithTexture 
           frontTexture={frontTexture} 
@@ -354,6 +357,35 @@ export default function Card({
       ) : (
         <CardContentFallback alphaMap={alphaMap} />
       )}
+      {showPricePanel && (
+        <PricePanel
+          marketPrice={marketPrice}
+          instantBuyBackPrice={instantBuyBackPrice}
+        />
+      )}
     </group>
   );
 }
+
+function areCardPropsEqual(prev, next) {
+  return (
+    prev.frontUrl === next.frontUrl &&
+    prev.backUrl === next.backUrl &&
+    vectorsEqual(prev.position, next.position) &&
+    vectorsEqual(prev.rotation, next.rotation) &&
+    prev.index === next.index &&
+    prev.focusedIndex === next.focusedIndex &&
+    prev.enableDragTilt === next.enableDragTilt &&
+    prev.enableFocusLift === next.enableFocusLift &&
+    prev.enableDimming === next.enableDimming &&
+    prev.interactive === next.interactive &&
+    prev.baseScale === next.baseScale &&
+    prev.onCardTap === next.onCardTap &&
+    prev.showPricePanel === next.showPricePanel &&
+    prev.marketPrice === next.marketPrice &&
+    prev.instantBuyBackPrice === next.instantBuyBackPrice &&
+    prev.onCursorChange === next.onCursorChange
+  );
+}
+
+export default memo(Card, areCardPropsEqual);

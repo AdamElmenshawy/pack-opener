@@ -10,6 +10,11 @@ const LIST_SPACING = 1.18;
 const STACK_DROPPED_Y = -1.7;
 const STACK_BASE_SCALE = 1.32;
 const LIST_BASE_SCALE = 0.74;
+const TILT_SMOOTHING = 14;
+
+function getDampFactor(speed, delta) {
+  return 1 - Math.exp(-speed * delta);
+}
 
 export default function StackDeck({
   cards,
@@ -18,7 +23,8 @@ export default function StackDeck({
   movingCard = null,
   movingToIndex = -1,
   stackAnimProgress = 0,
-  isAnimating = false
+  isAnimating = false,
+  onCursorChange = () => {}
 }) {
   const stackGroupRef = useRef();
   const [focusedCollageIndex, setFocusedCollageIndex] = useState(null);
@@ -34,7 +40,6 @@ export default function StackDeck({
   const safeCollageCards = collageCards || [];
   const hasDeckCards = safeCards.length > 0;
   const hasAnyCards = hasDeckCards || safeCollageCards.length > 0 || movingCard;
-  if (!hasAnyCards) return null;
 
   const lastIndex = Math.max(safeCards.length - 1, 0);
   const getBasePosition = (stackIndex) => [
@@ -68,19 +73,22 @@ export default function StackDeck({
     tiltTargetRef.current.y = normalizedX * 0.58;
   };
 
-  useFrame(() => {
+  useFrame((_, delta) => {
     if (!stackGroupRef.current) return;
+    const damp = getDampFactor(TILT_SMOOTHING, delta);
     stackGroupRef.current.rotation.x = THREE.MathUtils.lerp(
       stackGroupRef.current.rotation.x,
       tiltTargetRef.current.x,
-      0.1
+      damp
     );
     stackGroupRef.current.rotation.y = THREE.MathUtils.lerp(
       stackGroupRef.current.rotation.y,
       tiltTargetRef.current.y,
-      0.1
+      damp
     );
   });
+
+  if (!hasAnyCards) return null;
 
   return (
     <group position={[0, -0.15, 0]}>
@@ -103,6 +111,7 @@ export default function StackDeck({
             interactive={!isAnimating}
             baseScale={LIST_BASE_SCALE}
             onCardTap={null}
+            onCursorChange={onCursorChange}
           />
         );
       })}
@@ -115,7 +124,7 @@ export default function StackDeck({
             0.4
           ]}
           onPointerEnter={() => {
-            if (!isAnimating) document.body.style.cursor = 'pointer';
+            if (!isAnimating) onCursorChange('pointer');
           }}
           onPointerDown={(e) => {
             if (isAnimating) return;
@@ -126,7 +135,7 @@ export default function StackDeck({
             dragStateRef.current.startY = e.clientY || 0;
             updateTiltFromWorldPoint(e.point);
             e.target.setPointerCapture?.(e.pointerId);
-            document.body.style.cursor = 'grabbing';
+            onCursorChange('grabbing');
           }}
           onPointerMove={(e) => {
             if (!dragStateRef.current.active || isAnimating) return;
@@ -145,7 +154,7 @@ export default function StackDeck({
             dragStateRef.current.active = false;
             e.target.releasePointerCapture?.(e.pointerId);
             resetTilt();
-            document.body.style.cursor = 'pointer';
+            onCursorChange('pointer');
             if (wasClick && !isAnimating && typeof onCycleTopCard === 'function') {
               onCycleTopCard();
             }
@@ -153,7 +162,7 @@ export default function StackDeck({
           onPointerLeave={() => {
             if (dragStateRef.current.active) return;
             resetTilt();
-            document.body.style.cursor = 'default';
+            onCursorChange('default');
           }}
         >
           <planeGeometry args={[4.2, 5.6]} />
