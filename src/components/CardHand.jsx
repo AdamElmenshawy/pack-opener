@@ -2,7 +2,11 @@
 import { useState } from 'react';
 import Card from './Card';
 
-export default function CardHand({ cards, onCursorChange = () => {} }) {
+export default function CardHand({
+  cards,
+  onCursorChange = () => {},
+  sparkleIntensity
+}) {
   const [focusedIndex, setFocusedIndex] = useState(null);
 
   const getPriceValue = (card, keys) => {
@@ -13,7 +17,7 @@ export default function CardHand({ cards, onCursorChange = () => {} }) {
     }
     return '';
   };
-  
+
   // Horizontal arc fan layout
   const getArcPosition = (index, total) => {
     const radius = 11;
@@ -50,6 +54,8 @@ export default function CardHand({ cards, onCursorChange = () => {} }) {
           focusedIndex={focusedIndex}
           onHover={setFocusedIndex}
           onHoverOut={() => setFocusedIndex(null)}
+          finishType={card.finish_type || 'normal'}
+          sparkleIntensity={sparkleIntensity}
           showPricePanel={focusedIndex === index}
           marketPrice={getPriceValue(card, ['market_price', 'marketPrice', 'price_market'])}
           instantBuyBackPrice={getPriceValue(card, [

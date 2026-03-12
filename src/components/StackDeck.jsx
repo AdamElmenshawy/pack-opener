@@ -24,7 +24,8 @@ export default function StackDeck({
   movingToIndex = -1,
   stackAnimProgress = 0,
   isAnimating = false,
-  onCursorChange = () => {}
+  onCursorChange = () => {},
+  sparkleIntensity
 }) {
   const stackGroupRef = useRef();
   const [focusedCollageIndex, setFocusedCollageIndex] = useState(null);
@@ -111,6 +112,8 @@ export default function StackDeck({
             interactive={!isAnimating}
             baseScale={LIST_BASE_SCALE}
             onCardTap={null}
+            finishType={card.finish_type || 'normal'}
+            sparkleIntensity={sparkleIntensity}
             onCursorChange={onCursorChange}
           />
         );
@@ -196,6 +199,8 @@ export default function StackDeck({
               interactive={false}
               baseScale={STACK_BASE_SCALE}
               onCardTap={null}
+              finishType={card.finish_type || 'normal'}
+              sparkleIntensity={sparkleIntensity}
             />
           );
         })}
@@ -238,6 +243,8 @@ export default function StackDeck({
             interactive={false}
             baseScale={movingScale}
             onCardTap={null}
+            finishType={movingCard.finish_type || 'normal'}
+            sparkleIntensity={sparkleIntensity}
           />
         );
       })()}

@@ -26,7 +26,8 @@ export default function Experience({
   onPackAnimationComplete,
   onCycleTopCard,
   onCursorChange,
-  packTextureUrl
+  packTextureUrl,
+  sparkleIntensity
 }) {
   const isPhaseTransition = status === 'transitioning';
   const rawBlend = isPhaseTransition ? phaseBlend : status === 'revealed' ? 1 : 0;
@@ -78,17 +79,27 @@ export default function Experience({
             stackAnimProgress={stackAnimProgress}
             isAnimating={stackAnimating}
             onCursorChange={onCursorChange}
+            sparkleIntensity={sparkleIntensity}
           />
         )}
 
         {showTransition && (
-          <TransitionFan cards={cards} sourceCards={collageCards} blend={blend} />
+          <TransitionFan
+            cards={cards}
+            sourceCards={collageCards}
+            blend={blend}
+            sparkleIntensity={sparkleIntensity}
+          />
         )}
 
         {/* Card Hand Display */}
         {showHand && (
           <Suspense fallback={null}>
-            <CardHand cards={cards} onCursorChange={onCursorChange} />
+            <CardHand
+              cards={cards}
+              onCursorChange={onCursorChange}
+              sparkleIntensity={sparkleIntensity}
+            />
           </Suspense>
         )}
         

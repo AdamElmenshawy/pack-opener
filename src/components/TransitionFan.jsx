@@ -34,7 +34,12 @@ const getFanRotation = (index, total) => {
   return [0, -angle * 0.85, 0];
 };
 
-export default function TransitionFan({ cards, sourceCards, blend }) {
+export default function TransitionFan({
+  cards,
+  sourceCards,
+  blend,
+  sparkleIntensity
+}) {
   if (!cards || cards.length === 0) return null;
 
   const sourceOrder = sourceCards && sourceCards.length > 0 ? sourceCards : cards;
@@ -76,6 +81,8 @@ export default function TransitionFan({ cards, sourceCards, blend }) {
             interactive={false}
             baseScale={1}
             onCardTap={null}
+            finishType={card.finish_type || 'normal'}
+            sparkleIntensity={sparkleIntensity}
           />
         );
       })}

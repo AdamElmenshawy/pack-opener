@@ -4,11 +4,22 @@ import Papa from 'papaparse';
 import gsap from 'gsap';
 import Experience from './components/Experience';
 
-const DEFAULT_CSV_URL = '/adam_pokemon_render.csv';
+const DEFAULT_CSV_URL = '/pricing_for_adam_e.csv';
 const DEFAULT_PACK_TEXTURE_URL = '/gradient_pack-removebg-preview.png';
 const DEFAULT_LOCAL_IMAGE_BASE = '/images';
 const DEFAULT_REMOTE_IMAGE_BASE = 'https://ocs-production-public-images.s3.amazonaws.com/images';
 const DEFAULT_REMAP_SOURCE_HOST = 'ocs-production-public-images.s3.amazonaws.com';
+const SPARKLE_SETTINGS_STORAGE_KEY = 'pack-opener-sparkle-settings-v1';
+const DEFAULT_SPARKLE_INTENSITY = 6;
+const SPARKLE_MIN = 1;
+const SPARKLE_MAX = 10;
+const MARKET_KEY_CANDIDATES = ['market_price', 'marketPrice', 'price_market', 'price', 'market'];
+const BUYBACK_KEY_CANDIDATES = [
+  'instant_buy_back_price',
+  'instantBuyBackPrice',
+  'buy_back_price',
+  'buyBackPrice'
+];
 
 function normalizeImagePath(value) {
   return String(value || '')
@@ -28,6 +39,95 @@ function shouldUseLocalBase(forceLocalImageBase) {
   if (typeof forceLocalImageBase === 'boolean') return forceLocalImageBase;
   if (typeof window === 'undefined') return false;
   return window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+}
+
+function clampSparkleLevel(value) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return SPARKLE_MIN;
+  return Math.min(SPARKLE_MAX, Math.max(SPARKLE_MIN, Math.round(numeric)));
+}
+
+function normalizeSparkleIntensity(value) {
+  if (typeof value === 'number' || typeof value === 'string') {
+    return clampSparkleLevel(value);
+  }
+  if (value && typeof value === 'object') {
+    const candidates = [value.normal, value.holo, value.reverseHolo]
+      .map((entry) => Number(entry))
+      .filter((entry) => Number.isFinite(entry));
+    if (candidates.length > 0) {
+      const avg = candidates.reduce((sum, current) => sum + current, 0) / candidates.length;
+      return clampSparkleLevel(avg);
+    }
+  }
+  return DEFAULT_SPARKLE_INTENSITY;
+}
+
+function parsePriceNumber(value) {
+  if (value === undefined || value === null) return null;
+  if (typeof value === 'number') {
+    return Number.isFinite(value) ? value : null;
+  }
+  const cleaned = String(value).replace(/[^0-9.-]+/g, '');
+  if (!cleaned) return null;
+  const parsed = Number(cleaned);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function formatUsd(value) {
+  if (!Number.isFinite(value)) return '';
+  return value.toLocaleString('en-US', {
+    style: 'currency',
+    currency: 'USD',
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2
+  });
+}
+
+function findFirstMatchingKey(keys, candidates) {
+  const loweredCandidates = candidates.map((item) => item.toLowerCase());
+  return keys.find((key) => loweredCandidates.includes(String(key).toLowerCase())) || null;
+}
+
+function normalizeFinishTypeFromText(text) {
+  const value = String(text || '').trim().toLowerCase();
+  if (!value) return null;
+  if (/(non[\s_-]*holo|no[\s_-]*holo|normal|regular|standard|none)/.test(value)) {
+    return 'normal';
+  }
+  if (/(reverse[\s_-]*holo|rev[\s_-]*holo)/.test(value)) {
+    return 'reverse_holo';
+  }
+  if (/(holo|holographic|foil|cosmos|galaxy|shiny)/.test(value)) {
+    return 'holo';
+  }
+  return null;
+}
+
+function detectFinishType(row, keys) {
+  for (const key of keys) {
+    const lowerKey = String(key || '').toLowerCase();
+    const raw = row?.[key];
+    if (raw === undefined || raw === null || raw === '') continue;
+    const keyLooksRelevant = /(finish|foil|holo|effect|treat|variant|surface|print|type|rarity)/.test(lowerKey);
+
+    if (typeof raw === 'boolean') {
+      if (!raw) continue;
+      if (/(reverse[\s_-]*holo|rev[\s_-]*holo)/.test(lowerKey)) return 'reverse_holo';
+      if (/(holo|foil)/.test(lowerKey)) return 'holo';
+      if (/(normal|regular|standard)/.test(lowerKey)) return 'normal';
+      continue;
+    }
+
+    if (!keyLooksRelevant) continue;
+
+    const fromValue = normalizeFinishTypeFromText(raw);
+    if (fromValue) return fromValue;
+
+    const fromCombined = normalizeFinishTypeFromText(`${lowerKey} ${raw}`);
+    if (fromCombined) return fromCombined;
+  }
+  return 'normal';
 }
 
 export default function PackOpener({
@@ -55,6 +155,8 @@ export default function PackOpener({
   const [isPackVisible, setIsPackVisible] = useState(false);
   const [texturesLoaded, setTexturesLoaded] = useState(false);
   const [cursor, setCursor] = useState('default');
+  const [showSettingsPanel, setShowSettingsPanel] = useState(false);
+  const [sparkleIntensity, setSparkleIntensity] = useState(DEFAULT_SPARKLE_INTENSITY);
 
   const topRef = useRef();
   const bottomRef = useRef();
@@ -74,6 +176,26 @@ export default function PackOpener({
   const resolvedImageBase = useMemo(() => {
     return shouldUseLocalBase(forceLocalImageBase) ? localImageBase : remoteImageBase;
   }, [forceLocalImageBase, localImageBase, remoteImageBase]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try {
+      const raw = window.localStorage.getItem(SPARKLE_SETTINGS_STORAGE_KEY);
+      if (!raw) return;
+      const parsed = JSON.parse(raw);
+      setSparkleIntensity(normalizeSparkleIntensity(parsed));
+    } catch {
+      // ignore local storage parsing issues
+    }
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    window.localStorage.setItem(
+      SPARKLE_SETTINGS_STORAGE_KEY,
+      JSON.stringify(sparkleIntensity)
+    );
+  }, [sparkleIntensity]);
 
   const setCursorSafe = useCallback((value) => {
     setCursor((prev) => (prev === value ? prev : value));
@@ -120,17 +242,47 @@ export default function PackOpener({
 
     const frontKey = frontKeys.find((k) => /url/i.test(k)) || frontKeys[0] || urlKeys[0];
     const backKey = backKeys.find((k) => /url/i.test(k)) || backKeys[0] || urlKeys[1];
+    const marketKey =
+      findFirstMatchingKey(keys, MARKET_KEY_CANDIDATES) ||
+      keys.find((key) => /(market|price)/i.test(key) && !/(buy|back|instant)/i.test(key)) ||
+      null;
+    const buyBackKey =
+      findFirstMatchingKey(keys, BUYBACK_KEY_CANDIDATES) ||
+      keys.find((key) => /(buy[\s_-]*back|instant)/i.test(key) && /(price|value|amount)/i.test(key)) ||
+      null;
 
     const rawFront = frontKey ? String(row[frontKey] || '').trim() : '';
     const rawBack = backKey ? String(row[backKey] || '').trim() : '';
     const front = rawFront ? toProxyUrl(rawFront) : null;
     const back = rawBack ? toProxyUrl(rawBack) : null;
+    const finishType = detectFinishType(row, keys);
+    const marketPriceValue = marketKey ? parsePriceNumber(row[marketKey]) : null;
+    const buyBackFromCsv = buyBackKey ? parsePriceNumber(row[buyBackKey]) : null;
+    const buyBackPriceValue =
+      buyBackFromCsv !== null
+        ? buyBackFromCsv
+        : marketPriceValue !== null
+          ? marketPriceValue * 0.8
+          : null;
+    const marketPriceDisplay = marketPriceValue !== null ? formatUsd(marketPriceValue) : '';
+    const buyBackPriceDisplay = buyBackPriceValue !== null ? formatUsd(buyBackPriceValue) : '';
 
     if (!front || !back) return null;
 
     return {
       ...row,
       card_id: row.card_id || row.id || row.cardId || row.name || 'unknown',
+      finish_type: finishType,
+      market_price_value: marketPriceValue,
+      instant_buy_back_price_value: buyBackPriceValue,
+      market_price: marketPriceDisplay || row.market_price || row.marketPrice || row.price_market || row.price || '',
+      instant_buy_back_price:
+        buyBackPriceDisplay ||
+        row.instant_buy_back_price ||
+        row.instantBuyBackPrice ||
+        row.buy_back_price ||
+        row.buyBackPrice ||
+        '',
       url_front_original: rawFront,
       url_back_original: rawBack,
       url_front_preprocessed: front,
@@ -278,6 +430,11 @@ export default function PackOpener({
     pickNewHand(allCards);
   }, [allCards, pickNewHand, status]);
 
+  const updateSparkleIntensity = useCallback((level) => {
+    const clamped = clampSparkleLevel(level);
+    setSparkleIntensity((prev) => (prev === clamped ? prev : clamped));
+  }, []);
+
   const handleCycleTopCard = useCallback(() => {
     if (status !== 'stacked' || stackAnimating || stackCards.length === 0) return;
 
@@ -398,8 +555,90 @@ export default function PackOpener({
           onCycleTopCard={handleCycleTopCard}
           onCursorChange={setCursorSafe}
           packTextureUrl={packTextureUrl}
+          sparkleIntensity={sparkleIntensity}
         />
       </Suspense>
+
+      <div
+        style={{
+          position: 'absolute',
+          top: '14px',
+          right: '14px',
+          zIndex: 40,
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'flex-end',
+          gap: '8px'
+        }}
+      >
+        <button
+          type="button"
+          onClick={() => setShowSettingsPanel((prev) => !prev)}
+          style={{
+            padding: '8px 12px',
+            borderRadius: '10px',
+            border: '1px solid rgba(255,255,255,0.25)',
+            background: 'rgba(0,0,0,0.58)',
+            color: '#fff',
+            fontSize: '0.78rem',
+            letterSpacing: '0.05em',
+            textTransform: 'uppercase',
+            cursor: 'pointer',
+            backdropFilter: 'blur(6px)'
+          }}
+        >
+          Settings
+        </button>
+
+        {showSettingsPanel && (
+          <div
+            style={{
+              minWidth: '260px',
+              borderRadius: '12px',
+              border: '1px solid rgba(255,255,255,0.24)',
+              background: 'rgba(0,0,0,0.68)',
+              color: '#fff',
+              padding: '12px',
+              backdropFilter: 'blur(8px)'
+            }}
+          >
+            <div
+              style={{
+                fontSize: '0.72rem',
+                textTransform: 'uppercase',
+                letterSpacing: '0.07em',
+                opacity: 0.8,
+                marginBottom: '10px'
+              }}
+            >
+              Sparkle Intensity Meter
+            </div>
+
+            <label style={{ display: 'block' }}>
+              <div
+                style={{
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  marginBottom: '4px',
+                  fontSize: '0.82rem'
+                }}
+              >
+                <span>Intensity</span>
+                <span>{sparkleIntensity}</span>
+              </div>
+              <input
+                type="range"
+                min={SPARKLE_MIN}
+                max={SPARKLE_MAX}
+                step={1}
+                value={sparkleIntensity}
+                onChange={(e) => updateSparkleIntensity(e.target.value)}
+                style={{ width: '100%' }}
+              />
+            </label>
+          </div>
+        )}
+      </div>
 
       {status === 'pack' && (
         <h1
