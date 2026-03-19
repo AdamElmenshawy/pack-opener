@@ -6,7 +6,7 @@ import Experience from './components/Experience';
 
 const DEFAULT_CSV_URL = '/pricing_for_adam_e.csv';
 const DEFAULT_PACK_TEXTURE_URL = '/gradient_pack-removebg-preview.png';
-const DEFAULT_LOCAL_IMAGE_BASE = '/images';
+const DEFAULT_LOCAL_IMAGE_BASE = '/api/images';
 const DEFAULT_REMOTE_IMAGE_BASE = 'https://ocs-production-public-images.s3.amazonaws.com/images';
 const DEFAULT_REMAP_SOURCE_HOST = 'ocs-production-public-images.s3.amazonaws.com';
 const SPARKLE_SETTINGS_STORAGE_KEY = 'pack-opener-sparkle-settings-v1';
@@ -20,6 +20,7 @@ const BUYBACK_KEY_CANDIDATES = [
   'buy_back_price',
   'buyBackPrice'
 ];
+const PRELOAD_BATCH_SIZE = 6;
 
 function normalizeImagePath(value) {
   return String(value || '')
@@ -38,13 +39,20 @@ function buildImageUrl(base, normalizedPath, search = '') {
 function shouldUseLocalBase(forceLocalImageBase) {
   if (typeof forceLocalImageBase === 'boolean') return forceLocalImageBase;
   if (typeof window === 'undefined') return false;
-  return window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+  const host = window.location.hostname;
+  return host === 'localhost' || host === '127.0.0.1';
 }
 
 function clampSparkleLevel(value) {
   const numeric = Number(value);
   if (!Number.isFinite(numeric)) return SPARKLE_MIN;
   return Math.min(SPARKLE_MAX, Math.max(SPARKLE_MIN, Math.round(numeric)));
+}
+
+function clampHandSizeValue(value) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return 5;
+  return Math.max(1, Math.min(20, Math.floor(numeric)));
 }
 
 function normalizeSparkleIntensity(value) {
@@ -157,6 +165,11 @@ export default function PackOpener({
   const [cursor, setCursor] = useState('default');
   const [showSettingsPanel, setShowSettingsPanel] = useState(false);
   const [sparkleIntensity, setSparkleIntensity] = useState(DEFAULT_SPARKLE_INTENSITY);
+  const baseHandSize = useMemo(() => clampHandSizeValue(handSize), [handSize]);
+  const [handSizeSetting, setHandSizeSetting] = useState(baseHandSize);
+  useEffect(() => {
+    setHandSizeSetting(baseHandSize);
+  }, [baseHandSize]);
 
   const topRef = useRef();
   const bottomRef = useRef();
@@ -167,11 +180,7 @@ export default function PackOpener({
   const stackTweenRef = useRef(null);
   const phaseTweenRef = useRef(null);
 
-  const resolvedHandSize = useMemo(() => {
-    const numericHandSize = Number(handSize);
-    if (!Number.isFinite(numericHandSize)) return 5;
-    return Math.max(1, Math.floor(numericHandSize));
-  }, [handSize]);
+  const resolvedHandSize = useMemo(() => clampHandSizeValue(handSizeSetting), [handSizeSetting]);
 
   const resolvedImageBase = useMemo(() => {
     return shouldUseLocalBase(forceLocalImageBase) ? localImageBase : remoteImageBase;
@@ -222,6 +231,13 @@ export default function PackOpener({
 
     try {
       const parsed = new URL(url);
+      
+      // Handle the CORS-blocked verifai bucket
+      if (parsed.hostname === 'ocs-verifai-public-images.s3.amazonaws.com') {
+        return `/api/verifai-images${parsed.pathname}`;
+      }
+      
+      // Handle the main production bucket
       if (remapSourceHost && parsed.hostname === remapSourceHost) {
         return buildImageUrl(resolvedImageBase, normalizedFromPath(parsed.pathname), parsed.search);
       }
@@ -290,7 +306,7 @@ export default function PackOpener({
     };
   }, [toProxyUrl]);
 
-  const pickNewHand = useCallback(async (cards) => {
+  const pickNewHand = useCallback(async (cards, overrideHandSize) => {
     setCursorSafe('default');
     setTexturesLoaded(false);
     setStatus('loading');
@@ -311,7 +327,10 @@ export default function PackOpener({
     }
 
     const shuffled = [...validCards].sort(() => 0.5 - Math.random());
-    const selected = shuffled.slice(0, Math.min(resolvedHandSize, shuffled.length));
+    const targetHandSize = clampHandSizeValue(
+      overrideHandSize !== undefined ? overrideHandSize : resolvedHandSize
+    );
+    const selected = shuffled.slice(0, Math.min(targetHandSize, shuffled.length));
 
     setCurrentHand(selected);
     setStackCards(selected);
@@ -325,21 +344,44 @@ export default function PackOpener({
     stopStackTween();
     stopPhaseTween();
 
-    const preloadPromises = selected.flatMap((card) => [
-      useTexture.preload(card.url_front_preprocessed || card.url_front_original),
-      useTexture.preload(card.url_back_preprocessed || card.url_back_original)
-    ]);
+    const preloadTextures = (cardList) =>
+      cardList.flatMap((card) => [
+        useTexture.preload(card.url_front_preprocessed || card.url_front_original),
+        useTexture.preload(card.url_back_preprocessed || card.url_back_original)
+      ]);
+
+    const initialBatch = selected.slice(0, Math.min(PRELOAD_BATCH_SIZE, selected.length));
+    const backgroundBatch = selected.slice(initialBatch.length);
+
+    const preloadInitial = preloadTextures(initialBatch);
 
     try {
-      await Promise.all(preloadPromises);
+      await Promise.all(preloadInitial);
     } catch (error) {
       console.error('Texture preload warning:', error);
     } finally {
+      if (backgroundBatch.length > 0) {
+        const backgroundPromises = preloadTextures(backgroundBatch);
+        Promise.allSettled(backgroundPromises).catch((error) => {
+          console.warn('Background texture preload warning:', error);
+        });
+      }
       setTexturesLoaded(true);
       setIsPackVisible(true);
       setStatus('pack');
     }
   }, [resolvedHandSize, setCursorSafe, stopPhaseTween, stopStackTween]);
+
+  const handleHandSizeChange = useCallback(
+    (value) => {
+      const nextSize = clampHandSizeValue(value);
+      setHandSizeSetting(nextSize);
+      if (allCards.length > 0) {
+        pickNewHand(allCards, nextSize);
+      }
+    },
+    [allCards, pickNewHand]
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -636,6 +678,41 @@ export default function PackOpener({
                 style={{ width: '100%' }}
               />
             </label>
+            <div style={{ marginTop: '14px' }}>
+              <div
+                style={{
+                  fontSize: '0.72rem',
+                  textTransform: 'uppercase',
+                  letterSpacing: '0.07em',
+                  opacity: 0.8,
+                  marginBottom: '10px'
+                }}
+              >
+                Pack Size Meter
+              </div>
+              <label style={{ display: 'block' }}>
+                <div
+                  style={{
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    marginBottom: '4px',
+                    fontSize: '0.82rem'
+                  }}
+                >
+                  <span>Cards in pack</span>
+                  <span>{resolvedHandSize}</span>
+                </div>
+                <input
+                  type="range"
+                  min={1}
+                  max={20}
+                  step={1}
+                  value={handSizeSetting}
+                  onChange={(e) => handleHandSizeChange(e.target.value)}
+                  style={{ width: '100%' }}
+                />
+              </label>
+            </div>
           </div>
         )}
       </div>

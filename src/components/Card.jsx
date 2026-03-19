@@ -261,16 +261,16 @@ function getSparkleVisibility(intensity) {
 }
 
 function getSparkleRepeat(intensity) {
-  const _ = intensity;
-  return 1;
+  const normalized = normalizeSparkleIntensity(intensity);
+  return THREE.MathUtils.lerp(1.05, 1.35, (normalized - 1) / 9);
 }
 
 function paintSparkleTexture(ctx, size) {
   ctx.clearRect(0, 0, size, size);
-  const lineAnchors = [0.18, 0.5, 0.82];
-  const lineStartY = -size * 0.2;
-  const lineEndY = size * 1.2;
-  const slope = size * 0.78;
+  const lineAnchors = [0.05, 0.25, 0.45, 0.65, 0.85];
+  const lineStartY = -size * 0.35;
+  const lineEndY = size * 1.35;
+  const slope = size;
 
   lineAnchors.forEach((anchor) => {
     const startX = size * anchor;
@@ -461,8 +461,14 @@ function Card({
   finishEffectSettings = DEFAULT_FINISH_EFFECT_SETTINGS,
   sparkleIntensity = DEFAULT_SPARKLE_INTENSITY,
   onCursorChange = () => {}
+  , renderOrder = 0
 }) {
   const groupRef = useRef();
+  useEffect(() => {
+    if (groupRef.current) {
+      groupRef.current.renderOrder = renderOrder;
+    }
+  }, [renderOrder]);
   const frontMaterialRef = useRef();
   const backMaterialRef = useRef();
   const finishMaterialRef = useRef();
@@ -640,13 +646,13 @@ function Card({
       const sparkleMap = sparkleMaterialRef.current.map;
       if (sparkleMap) {
         const targetOffsetX = tiltX * 0.14 * sparkleMotionScale;
-        const targetOffsetY = 0;
+        const targetOffsetY = tiltY * 0.12 * sparkleMotionScale;
         const textureDamp = getDampFactor(8.6, delta);
-        sparkleMap.offset.x = THREE.MathUtils.lerp(
-          sparkleMap.offset.x,
-          targetOffsetX,
-          textureDamp
-        );
+    sparkleMap.offset.x = THREE.MathUtils.lerp(
+      sparkleMap.offset.x,
+      targetOffsetX,
+      textureDamp
+    );
         sparkleMap.offset.y = THREE.MathUtils.lerp(
           sparkleMap.offset.y,
           targetOffsetY,
@@ -796,6 +802,7 @@ function areCardPropsEqual(prev, next) {
     prev.finishType === next.finishType &&
     prev.finishEffectSettings === next.finishEffectSettings &&
     prev.sparkleIntensity === next.sparkleIntensity &&
+    prev.renderOrder === next.renderOrder &&
     prev.onCursorChange === next.onCursorChange
   );
 }
