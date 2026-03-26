@@ -6,13 +6,23 @@ import * as THREE from 'three';
 
 const CARD_WIDTH = 2.5;
 const CARD_HEIGHT = 3.5;
-const CARD_DEPTH = 0.05;
-const CARD_SHELL_INSET = 0.04;
+const CARD_DEPTH = 0.0018;
+const CARD_SHELL_INSET = 0.02;
+const CARD_FACE_OFFSET = 0.00102;
+const CARD_FINISH_OFFSET = 0.00124;
+const CARD_DIAGONAL_OFFSET = 0.00142;
+const CARD_SPARKLE_OFFSET = 0.0016;
+const SHELL_OPACITY = 0.12;
 const POSITION_SMOOTHING = 14;
 const ROTATION_SMOOTHING = 14;
 const SCALE_SMOOTHING_IN = 14;
 const SCALE_SMOOTHING_OUT = 8;
 const OPACITY_SMOOTHING = 12;
+const FOCUS_INTERACTION_PLANE_SCALE = 1.95;
+const HOVER_PREVIEW_FACTOR = 0.66;
+const DETAIL_ROTATION_X_RANGE = 0.8;
+const DETAIL_ROTATION_Y_RANGE = Math.PI * 0.98;
+const DETAIL_ROTATION_Z_RANGE = 0.16;
 const FINISH_TEXTURE_SIZE = 512;
 const ART_REGION = {
   x: 0.108,
@@ -705,20 +715,21 @@ function CardContentWithTexture({
   backTexture,
   alphaMap,
   frontMaterialRef,
-  backMaterialRef
+  backMaterialRef,
+  renderOrderBase = 0
 }) {
   return (
     <group>
-      <mesh>
+      <mesh renderOrder={renderOrderBase}>
         <RoundedBox
           args={[CARD_WIDTH - CARD_SHELL_INSET, CARD_HEIGHT - CARD_SHELL_INSET, CARD_DEPTH]}
-          radius={0.12}
-          smoothness={6}
+          radius={0.085}
+          smoothness={4}
         >
-          <meshStandardMaterial color="#101010" />
+          <meshStandardMaterial color="#181818" transparent opacity={SHELL_OPACITY} />
         </RoundedBox>
       </mesh>
-      <mesh position={[0, 0, 0.028]}>
+      <mesh position={[0, 0, CARD_FACE_OFFSET]} renderOrder={renderOrderBase + 2}>
         <planeGeometry args={[CARD_WIDTH, CARD_HEIGHT]} />
         <meshStandardMaterial
           ref={frontMaterialRef}
@@ -726,12 +737,19 @@ function CardContentWithTexture({
           alphaMap={alphaMap || null}
           transparent
           alphaTest={0.03}
+          polygonOffset
+          polygonOffsetFactor={-1}
+          polygonOffsetUnits={-4}
           toneMapped={false}
           side={THREE.FrontSide}
           opacity={1}
         />
       </mesh>
-      <mesh position={[0, 0, -0.028]} rotation={[0, Math.PI, 0]}>
+      <mesh
+        position={[0, 0, -CARD_FACE_OFFSET]}
+        rotation={[0, Math.PI, 0]}
+        renderOrder={renderOrderBase + 1}
+      >
         <planeGeometry args={[CARD_WIDTH, CARD_HEIGHT]} />
         <meshStandardMaterial
           ref={backMaterialRef}
@@ -739,6 +757,9 @@ function CardContentWithTexture({
           alphaMap={alphaMap || null}
           transparent
           alphaTest={0.03}
+          polygonOffset
+          polygonOffsetFactor={-1}
+          polygonOffsetUnits={-4}
           toneMapped={false}
           side={THREE.FrontSide}
           opacity={1}
@@ -748,9 +769,9 @@ function CardContentWithTexture({
   );
 }
 
-function CardContentFallback({ alphaMap = null }) {
+function CardContentFallback({ alphaMap = null, renderOrderBase = 0 }) {
   return (
-    <mesh>
+    <mesh renderOrder={renderOrderBase + 2}>
       <planeGeometry args={[CARD_WIDTH, CARD_HEIGHT]} />
       <meshStandardMaterial
         color="#4b4b4b"
@@ -758,6 +779,9 @@ function CardContentFallback({ alphaMap = null }) {
         alphaMap={alphaMap || null}
         transparent
         alphaTest={0.03}
+        polygonOffset
+        polygonOffsetFactor={-1}
+        polygonOffsetUnits={-4}
         side={THREE.DoubleSide}
       />
     </mesh>
@@ -825,12 +849,14 @@ function Card({
   rotation, 
   index, 
   focusedIndex, 
+  hovered = false,
   onHover, 
   onHoverOut,
   enableDragTilt = true,
   enableFocusLift = true,
   enableDimming = true,
   interactive = true,
+  interactionMode = 'drag',
   baseScale = 1,
   onCardTap = null,
   showPricePanel = false,
@@ -850,11 +876,14 @@ function Card({
   sparkleSettings = DEFAULT_SPARKLE_SETTINGS,
   shimmerSettings = DEFAULT_SHIMMER_SETTINGS,
   priceLabelSettings = DEFAULT_PRICE_LABEL_SETTINGS,
-  onCursorChange = () => {}
+  onCursorChange = () => {},
+  onBoundedPointerEnter = () => {},
+  onBoundedPointerLeave = () => {}
   ,
   renderOrder = 0
 }) {
   const groupRef = useRef();
+  const cardVisualRef = useRef();
   useEffect(() => {
     if (groupRef.current) {
       groupRef.current.renderOrder = renderOrder;
@@ -1006,6 +1035,7 @@ function Card({
   const targetScale = useRef(new THREE.Vector3(baseScale, baseScale, baseScale));
   
   const isFocused = focusedIndex === index;
+  const isHovered = hovered && !isFocused;
   const isDimmed = enableDimming && focusedIndex !== null && focusedIndex !== index;
   const shouldRenderFinishEffect = isFinishEffectEnabled(finishType, finishEffectSettings);
   const cardSparkleIntensity = sparkleIntensity * THREE.MathUtils.lerp(0.85, 1.4, sparkleIntensitySetting);
@@ -1015,6 +1045,7 @@ function Card({
   const sparkleRepeat = getSparkleRepeat(cardSparkleIntensity);
   const sparkleEffectFactor = sparkleVfxFactor === null ? 1 : clamp01(sparkleVfxFactor);
   const shimmerActive = shouldRenderFinishEffect && shimmerEnabledOverride;
+  const isBoundedInteraction = interactionMode === 'bounded';
   const updateTiltFromWorldPoint = (worldPoint) => {
     if (!groupRef.current) return;
     const localPoint = groupRef.current.worldToLocal(worldPoint.clone());
@@ -1023,7 +1054,7 @@ function Card({
   };
 
   useFrame((state, delta) => {
-    if (!groupRef.current) return;
+    if (!groupRef.current || !cardVisualRef.current) return;
 
     // Update targets based on focus state
     if (isFocused) {
@@ -1035,7 +1066,13 @@ function Card({
         targetScale.current.set(baseScale, baseScale, baseScale);
       }
 
-      if (isDraggingRef.current && enableDragTilt) {
+      if (isBoundedInteraction && enableDragTilt) {
+        targetRotation.current.set(
+          -hoverTiltRef.current.y * DETAIL_ROTATION_X_RANGE,
+          hoverTiltRef.current.x * DETAIL_ROTATION_Y_RANGE,
+          hoverTiltRef.current.x * DETAIL_ROTATION_Z_RANGE
+        );
+      } else if (isDraggingRef.current && enableDragTilt) {
         targetRotation.current.set(
           -hoverTiltRef.current.y * 0.55,
           hoverTiltRef.current.x * 1.65,
@@ -1046,6 +1083,16 @@ function Card({
       } else {
         targetRotation.current.set(rotation[0], rotation[1], rotation[2]);
       }
+    } else if (isHovered && isBoundedInteraction) {
+      const previewZ = enableFocusLift
+        ? THREE.MathUtils.lerp(position[2], 2, HOVER_PREVIEW_FACTOR)
+        : position[2] + 0.4;
+      const previewScale = enableFocusLift
+        ? THREE.MathUtils.lerp(baseScale, baseScale * 1.3, HOVER_PREVIEW_FACTOR)
+        : baseScale * 1.12;
+      targetPosition.current.set(position[0], position[1], previewZ);
+      targetRotation.current.set(rotation[0], rotation[1], rotation[2]);
+      targetScale.current.set(previewScale, previewScale, previewScale);
     } else {
       targetPosition.current.set(position[0], position[1], position[2]);
       targetRotation.current.set(rotation[0], rotation[1], rotation[2]);
@@ -1056,18 +1103,18 @@ function Card({
     const positionDamp = getDampFactor(POSITION_SMOOTHING, delta);
     const rotationDamp = getDampFactor(ROTATION_SMOOTHING, delta);
     groupRef.current.position.lerp(targetPosition.current, positionDamp);
-    groupRef.current.rotation.x = THREE.MathUtils.lerp(
-      groupRef.current.rotation.x, 
+    cardVisualRef.current.rotation.x = THREE.MathUtils.lerp(
+      cardVisualRef.current.rotation.x, 
       targetRotation.current.x, 
       rotationDamp
     );
-    groupRef.current.rotation.y = THREE.MathUtils.lerp(
-      groupRef.current.rotation.y, 
+    cardVisualRef.current.rotation.y = THREE.MathUtils.lerp(
+      cardVisualRef.current.rotation.y, 
       targetRotation.current.y, 
       rotationDamp
     );
-    groupRef.current.rotation.z = THREE.MathUtils.lerp(
-      groupRef.current.rotation.z, 
+    cardVisualRef.current.rotation.z = THREE.MathUtils.lerp(
+      cardVisualRef.current.rotation.z, 
       targetRotation.current.z, 
       rotationDamp
     );
@@ -1216,16 +1263,17 @@ function Card({
     <group
       ref={groupRef}
       position={position}
-      rotation={rotation}
+      rotation={[0, 0, 0]}
+      scale={[baseScale, baseScale, baseScale]}
       raycast={interactive ? undefined : () => null}
       onPointerEnter={(e) => {
-        if (!interactive) return;
+        if (!interactive || isBoundedInteraction) return;
         e.stopPropagation();
         onHover(index);
         onCursorChange('pointer');
       }}
       onPointerDown={(e) => {
-        if (!interactive) return;
+        if (!interactive || isBoundedInteraction) return;
         e.stopPropagation();
         onHover(index);
         isPointerDownRef.current = true;
@@ -1237,12 +1285,12 @@ function Card({
         onCursorChange('grabbing');
       }}
       onPointerMove={(e) => {
-        if (!interactive || !enableDragTilt || !isDraggingRef.current) return;
+        if (!interactive || isBoundedInteraction || !enableDragTilt || !isDraggingRef.current) return;
         e.stopPropagation();
         updateTiltFromWorldPoint(e.point);
       }}
       onPointerUp={(e) => {
-        if (!interactive || !isPointerDownRef.current) return;
+        if (!interactive || isBoundedInteraction || !isPointerDownRef.current) return;
         e.stopPropagation();
         if (typeof onCardTap === 'function') {
           onCardTap(index);
@@ -1257,7 +1305,7 @@ function Card({
         onCursorChange('pointer');
       }}
       onPointerLeave={() => {
-        if (!interactive) return;
+        if (!interactive || isBoundedInteraction) return;
         isPointerDownRef.current = false;
         if (isDraggingRef.current) return;
         hoverTiltRef.current.x = 0;
@@ -1266,66 +1314,110 @@ function Card({
         onCursorChange('default');
       }}
     >
-      {!hasValidUrls ? (
-        <CardContentFallback />
-      ) : frontTexture && backTexture ? (
-        <CardContentWithTexture 
-          frontTexture={frontTexture} 
-          backTexture={backTexture}
-          alphaMap={alphaMap}
-          frontMaterialRef={frontMaterialRef}
-          backMaterialRef={backMaterialRef}
-        />
-      ) : (
-        <CardContentFallback alphaMap={alphaMap} />
+      {isFocused && interactive && isBoundedInteraction && (
+        <mesh
+          position={[0, 0, 0.12]}
+          onPointerEnter={() => {
+            onBoundedPointerEnter();
+            onCursorChange('pointer');
+          }}
+          onClick={(e) => {
+            e.stopPropagation();
+            if (typeof onCardTap === 'function') {
+              onCardTap(index);
+            }
+          }}
+          onPointerMove={(e) => {
+            e.stopPropagation();
+            onBoundedPointerEnter();
+            updateTiltFromWorldPoint(e.point);
+            onCursorChange('pointer');
+          }}
+          onPointerLeave={() => {
+            hoverTiltRef.current.x = 0;
+            hoverTiltRef.current.y = 0;
+            onBoundedPointerLeave();
+            onCursorChange('default');
+          }}
+        >
+          <planeGeometry
+            args={[CARD_WIDTH * FOCUS_INTERACTION_PLANE_SCALE, CARD_HEIGHT * FOCUS_INTERACTION_PLANE_SCALE]}
+          />
+          <meshBasicMaterial transparent opacity={0} depthWrite={false} colorWrite={false} />
+        </mesh>
       )}
-      <mesh position={[0, 0, 0.0305]}>
-        <planeGeometry args={[CARD_WIDTH, CARD_HEIGHT]} />
-        <meshBasicMaterial
-          ref={finishMaterialRef}
-          map={finishTexture || null}
-          alphaMap={alphaMap || null}
-          transparent
-          alphaTest={0.03}
-          depthWrite={false}
-          toneMapped={false}
-          side={THREE.FrontSide}
-          blending={THREE.NormalBlending}
-          opacity={0}
-        />
-      </mesh>
-      <mesh position={[0, 0, 0.0312]}>
-        <planeGeometry args={[CARD_WIDTH, CARD_HEIGHT]} />
-        <meshBasicMaterial
-          ref={diagonalMaterialRef}
-          map={diagonalTexture || null}
-          alphaMap={alphaMap || null}
-          color="#ffffff"
-          transparent
-          alphaTest={0.005}
-          depthWrite={false}
-          toneMapped={false}
-          side={THREE.FrontSide}
-          blending={THREE.NormalBlending}
-          opacity={0}
-        />
-      </mesh>
-      <mesh position={[0, 0, 0.0319]}>
-        <planeGeometry args={[CARD_WIDTH, CARD_HEIGHT]} />
-        <meshBasicMaterial
-          ref={sparkleMaterialRef}
-          map={sparkleTexture || null}
-          alphaMap={alphaMap || null}
-          color="#bfefff"
-          transparent
-          alphaTest={0.005}
-          depthWrite={false}
-          toneMapped={false}
-          side={THREE.FrontSide}
-          blending={THREE.NormalBlending}
-          opacity={0}
-        />
-      </mesh>
+      <group ref={cardVisualRef} rotation={rotation}>
+        {!hasValidUrls ? (
+          <CardContentFallback renderOrderBase={renderOrder * 10} />
+        ) : frontTexture && backTexture ? (
+          <CardContentWithTexture 
+            frontTexture={frontTexture} 
+            backTexture={backTexture}
+            alphaMap={alphaMap}
+            frontMaterialRef={frontMaterialRef}
+            backMaterialRef={backMaterialRef}
+            renderOrderBase={renderOrder * 10}
+          />
+        ) : (
+          <CardContentFallback alphaMap={alphaMap} renderOrderBase={renderOrder * 10} />
+        )}
+        <mesh position={[0, 0, CARD_FINISH_OFFSET]} renderOrder={renderOrder * 10 + 3}>
+          <planeGeometry args={[CARD_WIDTH, CARD_HEIGHT]} />
+          <meshBasicMaterial
+            ref={finishMaterialRef}
+            map={finishTexture || null}
+            alphaMap={alphaMap || null}
+            transparent
+            alphaTest={0.03}
+            depthWrite={false}
+            polygonOffset
+            polygonOffsetFactor={-1}
+            polygonOffsetUnits={-6}
+            toneMapped={false}
+            side={THREE.FrontSide}
+            blending={THREE.NormalBlending}
+            opacity={0}
+          />
+        </mesh>
+        <mesh position={[0, 0, CARD_DIAGONAL_OFFSET]} renderOrder={renderOrder * 10 + 4}>
+          <planeGeometry args={[CARD_WIDTH, CARD_HEIGHT]} />
+          <meshBasicMaterial
+            ref={diagonalMaterialRef}
+            map={diagonalTexture || null}
+            alphaMap={alphaMap || null}
+            color="#ffffff"
+            transparent
+            alphaTest={0.005}
+            depthWrite={false}
+            polygonOffset
+            polygonOffsetFactor={-1}
+            polygonOffsetUnits={-8}
+            toneMapped={false}
+            side={THREE.FrontSide}
+            blending={THREE.NormalBlending}
+            opacity={0}
+          />
+        </mesh>
+        <mesh position={[0, 0, CARD_SPARKLE_OFFSET]} renderOrder={renderOrder * 10 + 5}>
+          <planeGeometry args={[CARD_WIDTH, CARD_HEIGHT]} />
+          <meshBasicMaterial
+            ref={sparkleMaterialRef}
+            map={sparkleTexture || null}
+            alphaMap={alphaMap || null}
+            color="#bfefff"
+            transparent
+            alphaTest={0.005}
+            depthWrite={false}
+            polygonOffset
+            polygonOffsetFactor={-1}
+            polygonOffsetUnits={-10}
+            toneMapped={false}
+            side={THREE.FrontSide}
+            blending={THREE.NormalBlending}
+            opacity={0}
+          />
+        </mesh>
+      </group>
       {showPricePanel && resolvedPriceLabelSettings.enabled && (
         <PricePanel
           marketPrice={marketPrice}
@@ -1346,10 +1438,12 @@ function areCardPropsEqual(prev, next) {
     vectorsEqual(prev.rotation, next.rotation) &&
     prev.index === next.index &&
     prev.focusedIndex === next.focusedIndex &&
+    prev.hovered === next.hovered &&
     prev.enableDragTilt === next.enableDragTilt &&
     prev.enableFocusLift === next.enableFocusLift &&
     prev.enableDimming === next.enableDimming &&
     prev.interactive === next.interactive &&
+    prev.interactionMode === next.interactionMode &&
     prev.baseScale === next.baseScale &&
     prev.onCardTap === next.onCardTap &&
     prev.showPricePanel === next.showPricePanel &&
@@ -1363,7 +1457,9 @@ function areCardPropsEqual(prev, next) {
     prev.diagonalCoverage === next.diagonalCoverage &&
     prev.rarity === next.rarity &&
     prev.renderOrder === next.renderOrder &&
-    prev.onCursorChange === next.onCursorChange
+    prev.onCursorChange === next.onCursorChange &&
+    prev.onBoundedPointerEnter === next.onBoundedPointerEnter &&
+    prev.onBoundedPointerLeave === next.onBoundedPointerLeave
   );
 }
 

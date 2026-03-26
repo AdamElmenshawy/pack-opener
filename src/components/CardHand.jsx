@@ -8,13 +8,18 @@ const MAX_CARDS_PER_ROW = 8;
 const ROW_SPACER_Y = 0.6;
 const ROW_DEPTH_OFFSET = 0.08;
 const MAX_ARC_SPAN = Math.PI / 1.6;
+const HAND_SELECTION_PADDING_X = 2.2;
+const HAND_SELECTION_PADDING_Y = 2.4;
+const HAND_SELECTION_PLANE_Z = -1.1;
+const FOCUS_CLEAR_DELAY_MS = 140;
 
 export default function CardHand({
   cards,
   onCursorChange = () => {},
   sparkleIntensity
 }) {
-  const [focusedIndex, setFocusedIndex] = useState(null);
+  const [hoveredIndex, setHoveredIndex] = useState(null);
+  const [selectedIndex, setSelectedIndex] = useState(null);
 
   const elevatedCards = cards || [];
   const totalCards = elevatedCards.length;
@@ -22,6 +27,7 @@ export default function CardHand({
   const rowCount = Math.max(1, Math.ceil(totalCards / cardsPerRow));
   const hoverTimerRef = useRef(null);
   const pendingFocusIndexRef = useRef(null);
+  const isInsideFocusedCardRef = useRef(false);
 
   const clearHoverTimer = useCallback(() => {
     if (hoverTimerRef.current) {
@@ -30,30 +36,22 @@ export default function CardHand({
     }
   }, []);
 
-  const scheduleFocus = useCallback(
-    (index) => {
-      if (pendingFocusIndexRef.current === index) return;
-      pendingFocusIndexRef.current = index;
-      clearHoverTimer();
-      hoverTimerRef.current = setTimeout(() => {
-        setFocusedIndex(pendingFocusIndexRef.current);
-        hoverTimerRef.current = null;
-      }, 80);
-    },
-    [clearHoverTimer]
-  );
-
-  const handleCardLeave = useCallback(() => {
-    clearHoverTimer();
-    pendingFocusIndexRef.current = null;
-    setFocusedIndex(null);
-  }, [clearHoverTimer]);
-
   useEffect(() => {
     return () => {
       clearHoverTimer();
     };
   }, [clearHoverTimer]);
+
+  const scheduleFocusClear = useCallback(() => {
+    clearHoverTimer();
+    hoverTimerRef.current = setTimeout(() => {
+      if (isInsideFocusedCardRef.current) return;
+      pendingFocusIndexRef.current = null;
+      setHoveredIndex(null);
+      setSelectedIndex(null);
+      onCursorChange('default');
+    }, FOCUS_CLEAR_DELAY_MS);
+  }, [clearHoverTimer, onCursorChange]);
 
   const getPriceValue = (card, keys) => {
     for (const key of keys) {
@@ -72,7 +70,7 @@ export default function CardHand({
     };
   }, [totalCards]);
 
-  const getPositionAndRotation = (index) => {
+  const getPositionAndRotation = useCallback((index) => {
     const rowIndex = Math.min(rowCount - 1, Math.floor(index / cardsPerRow));
     const rowStart = rowIndex * cardsPerRow;
     const rowTotal = Math.min(totalCards - rowStart, cardsPerRow);
@@ -93,14 +91,102 @@ export default function CardHand({
       rotation: [0, rotationY, 0],
       renderOrder: rowIndex * cardsPerRow + indexInRow
     };
-  };
+  }, [arcParams.arcSpan, arcParams.radius, cardsPerRow, rowCount, totalCards]);
+
+  const cardTransforms = useMemo(
+    () => elevatedCards.map((_, index) => getPositionAndRotation(index)),
+    [elevatedCards, getPositionAndRotation]
+  );
+
+  const selectionBounds = useMemo(() => {
+    const xs = cardTransforms.map((transform) => transform.position[0]);
+    const ys = cardTransforms.map((transform) => transform.position[1]);
+    const minX = Math.min(...xs);
+    const maxX = Math.max(...xs);
+    const minY = Math.min(...ys);
+    const maxY = Math.max(...ys);
+    return {
+      centerX: (minX + maxX) / 2,
+      centerY: (minY + maxY) / 2,
+      width: Math.max(5.5, maxX - minX + HAND_SELECTION_PADDING_X),
+      height: Math.max(5, maxY - minY + HAND_SELECTION_PADDING_Y)
+    };
+  }, [cardTransforms]);
+
+  const findNearestCardIndex = useCallback((worldPoint) => {
+    let bestIndex = 0;
+    let bestDistance = Number.POSITIVE_INFINITY;
+
+    cardTransforms.forEach((transform, index) => {
+      const dx = worldPoint.x - transform.position[0];
+      const dy = worldPoint.y - transform.position[1];
+      const distance = dx * dx + dy * dy * 1.35;
+      if (distance < bestDistance) {
+        bestDistance = distance;
+        bestIndex = index;
+      }
+    });
+
+    return bestIndex;
+  }, [cardTransforms]);
+
+  const handleSelectionMove = useCallback((event) => {
+    event.stopPropagation();
+    isInsideFocusedCardRef.current = false;
+    const nextIndex = findNearestCardIndex(event.point);
+    pendingFocusIndexRef.current = nextIndex;
+    clearHoverTimer();
+    setHoveredIndex(nextIndex);
+    onCursorChange('pointer');
+  }, [clearHoverTimer, findNearestCardIndex, onCursorChange]);
+
+  const handleSelectionClick = useCallback((event) => {
+    event.stopPropagation();
+    const nextIndex = pendingFocusIndexRef.current ?? findNearestCardIndex(event.point);
+    clearHoverTimer();
+    setHoveredIndex(nextIndex);
+    setSelectedIndex(nextIndex);
+    onCursorChange('pointer');
+  }, [clearHoverTimer, findNearestCardIndex, onCursorChange]);
+
+  const handleCardTap = useCallback((index) => {
+    clearHoverTimer();
+    setHoveredIndex(index);
+    setSelectedIndex((currentIndex) => (currentIndex === index ? null : index));
+    onCursorChange('pointer');
+  }, [clearHoverTimer, onCursorChange]);
+
+  const handleFocusedCardPointerEnter = useCallback(() => {
+    isInsideFocusedCardRef.current = true;
+    clearHoverTimer();
+    onCursorChange('pointer');
+  }, [clearHoverTimer, onCursorChange]);
+
+  const handleFocusedCardPointerLeave = useCallback(() => {
+    isInsideFocusedCardRef.current = false;
+    scheduleFocusClear();
+  }, [scheduleFocusClear]);
 
   if (totalCards === 0) return null;
 
   return (
     <group position={[0, 0, 0]}>
+      <mesh
+        position={[selectionBounds.centerX, selectionBounds.centerY, HAND_SELECTION_PLANE_Z]}
+        onPointerEnter={(event) => {
+          handleSelectionMove(event);
+        }}
+        onPointerMove={handleSelectionMove}
+        onPointerDown={handleSelectionClick}
+        onPointerLeave={() => {
+          scheduleFocusClear();
+        }}
+      >
+        <planeGeometry args={[selectionBounds.width, selectionBounds.height]} />
+        <meshBasicMaterial transparent opacity={0} depthWrite={false} colorWrite={false} />
+      </mesh>
       {elevatedCards.map((card, index) => {
-        const transform = getPositionAndRotation(index);
+        const transform = cardTransforms[index];
         return (
           <Card
             key={card.card_id}
@@ -110,9 +196,10 @@ export default function CardHand({
             rotation={transform.rotation}
             renderOrder={transform.renderOrder}
             index={index}
-            focusedIndex={focusedIndex}
-            onHover={() => scheduleFocus(index)}
-            onHoverOut={handleCardLeave}
+            focusedIndex={selectedIndex}
+            hovered={selectedIndex === null && hoveredIndex === index}
+            onHover={() => {}}
+            onHoverOut={() => {}}
             finishType={card.finish_type || 'normal'}
             sparkleIntensity={sparkleIntensity}
             sparklePalette={card.vfxSparklePalette}
@@ -126,7 +213,7 @@ export default function CardHand({
             sparkleSettings={card.sparkleSettings}
             shimmerSettings={card.shimmerSettings}
             priceLabelSettings={card.priceLabelSettings}
-            showPricePanel={focusedIndex === index}
+            showPricePanel={selectedIndex === index || hoveredIndex === index}
             marketPrice={getPriceValue(card, ['market_price', 'marketPrice', 'price_market'])}
             instantBuyBackPrice={getPriceValue(card, [
               'instant_buy_back_price',
@@ -134,7 +221,12 @@ export default function CardHand({
               'buy_back_price',
               'buyBackPrice'
             ])}
+            onCardTap={handleCardTap}
+            interactive={selectedIndex === index}
+            interactionMode="bounded"
             onCursorChange={onCursorChange}
+            onBoundedPointerEnter={handleFocusedCardPointerEnter}
+            onBoundedPointerLeave={handleFocusedCardPointerLeave}
           />
         );
       })}
@@ -166,10 +258,10 @@ export default function CardHand({
         distance={25}
       />
 
-      {focusedIndex !== null && (
+      {selectedIndex !== null && (
         <spotLight
           position={[
-            getPositionAndRotation(focusedIndex).position[0],
+            cardTransforms[selectedIndex].position[0],
             6,
             7
           ]}
