@@ -4,15 +4,14 @@ import Papa from 'papaparse';
 import gsap from 'gsap';
 import Experience from './components/Experience';
 
-const DEFAULT_CSV_URL = '/pricing_for_adam_e.csv';
+const DEFAULT_CSV_URL = '/more_cards_for_adam_v2.csv';
 const DEFAULT_PACK_TEXTURE_URL = '/gradient_pack-removebg-preview.png';
 const DEFAULT_LOCAL_IMAGE_BASE = '/api/images';
 const DEFAULT_REMOTE_IMAGE_BASE = 'https://ocs-production-public-images.s3.amazonaws.com/images';
 const DEFAULT_REMAP_SOURCE_HOST = 'ocs-production-public-images.s3.amazonaws.com';
-const SPARKLE_SETTINGS_STORAGE_KEY = 'pack-opener-sparkle-settings-v1';
+const GRADIENT_IMAGE_PROXY_PREFIX = '/gradient-images';
+const GRADIENT_REMOTE_HOST = 'images.gradientcollects.com';
 const DEFAULT_SPARKLE_INTENSITY = 6;
-const SPARKLE_MIN = 1;
-const SPARKLE_MAX = 10;
 const MARKET_KEY_CANDIDATES = ['market_price', 'marketPrice', 'price_market', 'price', 'market'];
 const BUYBACK_KEY_CANDIDATES = [
   'instant_buy_back_price',
@@ -20,7 +19,56 @@ const BUYBACK_KEY_CANDIDATES = [
   'buy_back_price',
   'buyBackPrice'
 ];
-const PRELOAD_BATCH_SIZE = 6;
+const VFX_DIAGONAL_COLUMNS = [
+  'diagonal_lines',
+  'diagonal_coverage',
+  'finish_diagonal',
+  'vfx_diagonal',
+  'diagonalIntensity'
+];
+const VFX_SPARKLE_COLUMNS = [
+  'sparkle_flow',
+  'sparkle_strength',
+  'sparkle_intensity',
+  'sparkle_rate',
+  'sparkle_spawn',
+  'finish_sparkles'
+];
+const VFX_PALETTE_COLUMNS = [
+  'vfx_palette',
+  'finish_palette',
+  'color_palette'
+];
+const SPARKLE_PALETTE_COLUMNS = [
+  'sparkle_palette',
+  'sparkles_palette',
+  'sparkle_colors',
+  'vfx_sparkle_palette'
+];
+const DIAGONAL_PALETTE_COLUMNS = [
+  'diagonal_palette',
+  'stripe_palette',
+  'shimmer_palette',
+  'line_palette',
+  'vfx_diagonal_palette'
+];
+const RARITY_COLUMNS = ['rarity', 'card_rarity', 'vfx_rarity', 'finish_rarity'];
+const DEFAULT_VFX_PALETTE = ['#bfefff', '#6ea4ff', '#ffeaa4'];
+const DEFAULT_PRICE_LABEL_FONT_SIZE = '11px';
+const DEFAULT_PRICE_LABEL_FONT_COLOR = '#ffffff';
+const IMAGE_PROBE_CACHE = new Map();
+const FINISH_PALETTES = {
+  normal: DEFAULT_VFX_PALETTE,
+  holo: ['#ff8dd9', '#7ae0ff', '#ffe88a'],
+  reverse_holo: ['#63d7ff', '#6d74ff', '#d3f2ff']
+};
+const RARITY_PALETTES = {
+  chase: ['#fff5d6', '#ffd65a', '#ff9c2a'],
+  legendary: ['#ffb5e3', '#ff7d7d', '#ffd470'],
+  epic: ['#cba2ff', '#7196ff', '#b4f3ff'],
+  rare: ['#6dfad6', '#4cb4ff', '#99e7ff'],
+  common: ['#c7d7ff', '#8ed1ff', '#e0f4ff']
+};
 
 function normalizeImagePath(value) {
   return String(value || '')
@@ -43,32 +91,10 @@ function shouldUseLocalBase(forceLocalImageBase) {
   return host === 'localhost' || host === '127.0.0.1';
 }
 
-function clampSparkleLevel(value) {
-  const numeric = Number(value);
-  if (!Number.isFinite(numeric)) return SPARKLE_MIN;
-  return Math.min(SPARKLE_MAX, Math.max(SPARKLE_MIN, Math.round(numeric)));
-}
-
 function clampHandSizeValue(value) {
   const numeric = Number(value);
   if (!Number.isFinite(numeric)) return 5;
   return Math.max(1, Math.min(20, Math.floor(numeric)));
-}
-
-function normalizeSparkleIntensity(value) {
-  if (typeof value === 'number' || typeof value === 'string') {
-    return clampSparkleLevel(value);
-  }
-  if (value && typeof value === 'object') {
-    const candidates = [value.normal, value.holo, value.reverseHolo]
-      .map((entry) => Number(entry))
-      .filter((entry) => Number.isFinite(entry));
-    if (candidates.length > 0) {
-      const avg = candidates.reduce((sum, current) => sum + current, 0) / candidates.length;
-      return clampSparkleLevel(avg);
-    }
-  }
-  return DEFAULT_SPARKLE_INTENSITY;
 }
 
 function parsePriceNumber(value) {
@@ -138,6 +164,117 @@ function detectFinishType(row, keys) {
   return 'normal';
 }
 
+function parsePercentageToFactor(value, fallback = null) {
+  if (value === undefined || value === null || value === '') {
+    return fallback;
+  }
+  const numeric = Number(String(value).replace(/%/g, '').trim());
+  if (!Number.isFinite(numeric)) {
+    return fallback;
+  }
+  return Math.min(1, Math.max(0, numeric / 100));
+}
+
+function parseBooleanSetting(value, fallback = true) {
+  if (value === undefined || value === null) return fallback;
+  if (typeof value === 'boolean') return value;
+  const normalized = String(value).trim().toLowerCase();
+  if (normalized === '') return fallback;
+  if (['0', 'false', 'no', 'off'].includes(normalized)) return false;
+  if (['1', 'true', 'yes', 'on'].includes(normalized)) return true;
+  return fallback;
+}
+
+function parseTextSetting(value, fallback) {
+  const text = String(value || '').trim();
+  if (!text) return fallback;
+  return text;
+}
+
+function buildPaletteArray(value) {
+  if (value === undefined || value === null) return [];
+  return String(value)
+    .split(/[;,|]/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function normalizeRarityText(value) {
+  if (value === undefined || value === null) return null;
+  const text = String(value).trim().toLowerCase();
+  if (!text) return null;
+  if (text.includes('chase')) return 'chase';
+  if (text.includes('legend')) return 'legendary';
+  if (text.includes('epic')) return 'epic';
+  if (text.includes('rare')) return 'rare';
+  if (text.includes('common')) return 'common';
+  return null;
+}
+
+function determineRarityFromPrice(price) {
+  if (!Number.isFinite(price)) return 'common';
+  if (price >= 200) return 'chase';
+  if (price >= 80) return 'legendary';
+  if (price >= 40) return 'epic';
+  if (price >= 12) return 'rare';
+  return 'common';
+}
+
+function getPaletteForRarityAndFinish(rarity, finishType) {
+  if (FINISH_PALETTES[finishType]) {
+    return FINISH_PALETTES[finishType];
+  }
+  if (RARITY_PALETTES[rarity]) {
+    return RARITY_PALETTES[rarity];
+  }
+  return DEFAULT_VFX_PALETTE;
+}
+
+function probeImageUrl(url) {
+  if (!url) return Promise.resolve(false);
+  if (IMAGE_PROBE_CACHE.has(url)) {
+    return IMAGE_PROBE_CACHE.get(url);
+  }
+  if (typeof Image === 'undefined') {
+    return Promise.resolve(true);
+  }
+
+  const probePromise = new Promise((resolve) => {
+    const image = new Image();
+
+    const cleanup = () => {
+      image.onload = null;
+      image.onerror = null;
+    };
+
+    image.onload = () => {
+      cleanup();
+      resolve(true);
+    };
+
+    image.onerror = () => {
+      cleanup();
+      resolve(false);
+    };
+
+    image.src = url;
+  });
+
+  IMAGE_PROBE_CACHE.set(url, probePromise);
+  return probePromise;
+}
+
+async function isCardPlayable(card) {
+  if (!card) return false;
+  const frontUrl = card.url_front_preprocessed || card.url_front_original;
+  const backUrl = card.url_back_preprocessed || card.url_back_original;
+  const [frontOk, backOk] = await Promise.all([
+    probeImageUrl(frontUrl),
+    probeImageUrl(backUrl)
+  ]);
+  return frontOk && backOk;
+}
+
 export default function PackOpener({
   csvUrl = DEFAULT_CSV_URL,
   packTextureUrl = DEFAULT_PACK_TEXTURE_URL,
@@ -163,13 +300,8 @@ export default function PackOpener({
   const [isPackVisible, setIsPackVisible] = useState(false);
   const [texturesLoaded, setTexturesLoaded] = useState(false);
   const [cursor, setCursor] = useState('default');
-  const [showSettingsPanel, setShowSettingsPanel] = useState(false);
-  const [sparkleIntensity, setSparkleIntensity] = useState(DEFAULT_SPARKLE_INTENSITY);
-  const baseHandSize = useMemo(() => clampHandSizeValue(handSize), [handSize]);
-  const [handSizeSetting, setHandSizeSetting] = useState(baseHandSize);
-  useEffect(() => {
-    setHandSizeSetting(baseHandSize);
-  }, [baseHandSize]);
+  const sparkleIntensity = DEFAULT_SPARKLE_INTENSITY;
+  const resolvedHandSize = useMemo(() => clampHandSizeValue(handSize), [handSize]);
 
   const topRef = useRef();
   const bottomRef = useRef();
@@ -180,31 +312,10 @@ export default function PackOpener({
   const stackTweenRef = useRef(null);
   const phaseTweenRef = useRef(null);
 
-  const resolvedHandSize = useMemo(() => clampHandSizeValue(handSizeSetting), [handSizeSetting]);
 
   const resolvedImageBase = useMemo(() => {
     return shouldUseLocalBase(forceLocalImageBase) ? localImageBase : remoteImageBase;
   }, [forceLocalImageBase, localImageBase, remoteImageBase]);
-
-  useEffect(() => {
-    if (typeof window === 'undefined') return;
-    try {
-      const raw = window.localStorage.getItem(SPARKLE_SETTINGS_STORAGE_KEY);
-      if (!raw) return;
-      const parsed = JSON.parse(raw);
-      setSparkleIntensity(normalizeSparkleIntensity(parsed));
-    } catch {
-      // ignore local storage parsing issues
-    }
-  }, []);
-
-  useEffect(() => {
-    if (typeof window === 'undefined') return;
-    window.localStorage.setItem(
-      SPARKLE_SETTINGS_STORAGE_KEY,
-      JSON.stringify(sparkleIntensity)
-    );
-  }, [sparkleIntensity]);
 
   const setCursorSafe = useCallback((value) => {
     setCursor((prev) => (prev === value ? prev : value));
@@ -241,6 +352,10 @@ export default function PackOpener({
       if (remapSourceHost && parsed.hostname === remapSourceHost) {
         return buildImageUrl(resolvedImageBase, normalizedFromPath(parsed.pathname), parsed.search);
       }
+      
+      if (parsed.hostname === GRADIENT_REMOTE_HOST) {
+        return `${GRADIENT_IMAGE_PROXY_PREFIX}${parsed.pathname}${parsed.search}`;
+      }
     } catch {
       // not a parseable URL
     }
@@ -266,6 +381,12 @@ export default function PackOpener({
       findFirstMatchingKey(keys, BUYBACK_KEY_CANDIDATES) ||
       keys.find((key) => /(buy[\s_-]*back|instant)/i.test(key) && /(price|value|amount)/i.test(key)) ||
       null;
+    const diagonalKey = findFirstMatchingKey(keys, VFX_DIAGONAL_COLUMNS);
+    const sparkleKey = findFirstMatchingKey(keys, VFX_SPARKLE_COLUMNS);
+    const sharedPaletteKey = findFirstMatchingKey(keys, VFX_PALETTE_COLUMNS);
+    const sparklePaletteKey = findFirstMatchingKey(keys, SPARKLE_PALETTE_COLUMNS);
+    const diagonalPaletteKey = findFirstMatchingKey(keys, DIAGONAL_PALETTE_COLUMNS);
+    const rarityKey = findFirstMatchingKey(keys, RARITY_COLUMNS);
 
     const rawFront = frontKey ? String(row[frontKey] || '').trim() : '';
     const rawBack = backKey ? String(row[backKey] || '').trim() : '';
@@ -282,6 +403,53 @@ export default function PackOpener({
           : null;
     const marketPriceDisplay = marketPriceValue !== null ? formatUsd(marketPriceValue) : '';
     const buyBackPriceDisplay = buyBackPriceValue !== null ? formatUsd(buyBackPriceValue) : '';
+    const diagonalCoverage = parsePercentageToFactor(row[diagonalKey], 1);
+    const sparkleFactor = parsePercentageToFactor(row[sparkleKey], null);
+    const sharedPaletteOverride = sharedPaletteKey ? buildPaletteArray(row[sharedPaletteKey]) : [];
+    const sparklePaletteOverride = sparklePaletteKey ? buildPaletteArray(row[sparklePaletteKey]) : [];
+    const diagonalPaletteOverride = diagonalPaletteKey ? buildPaletteArray(row[diagonalPaletteKey]) : [];
+    const parsedRarity = rarityKey ? normalizeRarityText(row[rarityKey]) : null;
+    const priceForRarity = marketPriceValue ?? buyBackPriceValue ?? null;
+    const computedRarity = parsedRarity || determineRarityFromPrice(priceForRarity);
+    const fallbackPalette = getPaletteForRarityAndFinish(computedRarity, finishType);
+    const finalSparklePalette =
+      sparklePaletteOverride.length > 0
+        ? sparklePaletteOverride
+        : sharedPaletteOverride.length > 0
+          ? sharedPaletteOverride
+          : fallbackPalette;
+    const finalDiagonalPalette =
+      diagonalPaletteOverride.length > 0
+        ? diagonalPaletteOverride
+        : sharedPaletteOverride.length > 0
+          ? sharedPaletteOverride
+          : finalSparklePalette;
+    const finalSparklePaletteKey = finalSparklePalette.join('|');
+    const finalDiagonalPaletteKey = finalDiagonalPalette.join('|');
+    const getFactor = (value, fallback) => {
+      const factor = parsePercentageToFactor(value, null);
+      return factor === null ? fallback : factor;
+    };
+    const sparkleSettings = {
+      enabled: parseBooleanSetting(row.sparkle_enabled, true),
+      opacity: getFactor(row.sparkle_opacity, 1),
+      intensity: getFactor(row.sparkle_intensity, 1),
+      size: getFactor(row.sparkle_size, 0.5),
+      speed: getFactor(row.sparkle_speed, 0.5),
+      quantity: getFactor(row.sparkle_quantity, 0.65)
+    };
+    const shimmerSettings = {
+      enabled: parseBooleanSetting(row.shimmer_enabled, true),
+      opacity: getFactor(row.shimmer_opacity, 0.55),
+      intensity: getFactor(row.shimmer_intensity, 0.6),
+      size: getFactor(row.shimmer_size, 0.4),
+      speed: getFactor(row.shimmer_speed, 0.5)
+    };
+    const priceLabelSettings = {
+      enabled: parseBooleanSetting(row.price_label_enabled, true),
+      fontSize: parseTextSetting(row.price_label_font_size, DEFAULT_PRICE_LABEL_FONT_SIZE),
+      fontColor: parseTextSetting(row.price_label_font_color, DEFAULT_PRICE_LABEL_FONT_COLOR)
+    };
 
     if (!front || !back) return null;
 
@@ -302,7 +470,21 @@ export default function PackOpener({
       url_front_original: rawFront,
       url_back_original: rawBack,
       url_front_preprocessed: front,
-      url_back_preprocessed: back
+      url_back_preprocessed: back,
+      vfxDiagonalCoverage: diagonalCoverage,
+      vfxSparkleFactor: sparkleFactor,
+      vfxSparklePalette: finalSparklePalette,
+      vfxSparklePaletteKey: finalSparklePaletteKey,
+      vfxDiagonalPalette: finalDiagonalPalette,
+      vfxDiagonalPaletteKey: finalDiagonalPaletteKey,
+      vfxHasExplicitPalette:
+        sparklePaletteOverride.length > 0 ||
+        diagonalPaletteOverride.length > 0 ||
+        sharedPaletteOverride.length > 0,
+      rarity: computedRarity,
+      sparkleSettings,
+      shimmerSettings,
+      priceLabelSettings
     };
   }, [toProxyUrl]);
 
@@ -330,58 +512,85 @@ export default function PackOpener({
     const targetHandSize = clampHandSizeValue(
       overrideHandSize !== undefined ? overrideHandSize : resolvedHandSize
     );
-    const selected = shuffled.slice(0, Math.min(targetHandSize, shuffled.length));
+    const selected = [];
+    const rejectedCardIds = [];
 
-    setCurrentHand(selected);
-    setStackCards(selected);
-    setCollageCards([]);
-    setStackCycles(0);
-    setStackAnimating(false);
-    setStackAnimProgress(0);
-    setPhaseBlend(0);
-    setMovingCard(null);
-    setMovingToIndex(-1);
-    stopStackTween();
-    stopPhaseTween();
+    for (const card of shuffled) {
+      // Skip cards whose image URLs already prove they will 403 or fail to decode.
+      const playable = await isCardPlayable(card);
+      if (playable) {
+        selected.push(card);
+      } else {
+        rejectedCardIds.push(card.card_id);
+      }
+      if (selected.length >= targetHandSize) break;
+    }
 
-    const preloadTextures = (cardList) =>
-      cardList.flatMap((card) => [
-        useTexture.preload(card.url_front_preprocessed || card.url_front_original),
-        useTexture.preload(card.url_back_preprocessed || card.url_back_original)
-      ]);
+    if (selected.length === 0) {
+      console.error('No playable cards available after image validation.', rejectedCardIds);
+      setStatus('error');
+      setIsPackVisible(false);
+      setTexturesLoaded(false);
+      return;
+    }
 
-    const initialBatch = selected.slice(0, Math.min(PRELOAD_BATCH_SIZE, selected.length));
-    const backgroundBatch = selected.slice(initialBatch.length);
+    if (rejectedCardIds.length > 0) {
+      console.warn('Skipping cards with unavailable images:', rejectedCardIds);
+    }
 
-    const preloadInitial = preloadTextures(initialBatch);
+    const preloadPairs = (cardList) =>
+      cardList.map(async (card) => {
+        const frontUrl = card.url_front_preprocessed || card.url_front_original;
+        const backUrl = card.url_back_preprocessed || card.url_back_original;
+        try {
+          await Promise.all([
+            useTexture.preload(frontUrl),
+            useTexture.preload(backUrl)
+          ]);
+          return card;
+        } catch (error) {
+          console.warn('Texture preload failed, removing card from hand:', card.card_id, error);
+          IMAGE_PROBE_CACHE.set(frontUrl, Promise.resolve(false));
+          IMAGE_PROBE_CACHE.set(backUrl, Promise.resolve(false));
+          return null;
+        }
+      });
 
     try {
-      await Promise.all(preloadInitial);
+      const preloadedCards = await Promise.all(preloadPairs(selected));
+      const readySelected = preloadedCards.filter(Boolean);
+
+      if (readySelected.length === 0) {
+        console.error('All selected cards failed texture preload.');
+        setStatus('error');
+        setIsPackVisible(false);
+        setTexturesLoaded(false);
+        return;
+      }
+
+      setCurrentHand(readySelected);
+      setStackCards(readySelected);
+      setCollageCards([]);
+      setStackCycles(0);
+      setStackAnimating(false);
+      setStackAnimProgress(0);
+      setPhaseBlend(0);
+      setMovingCard(null);
+      setMovingToIndex(-1);
+      stopStackTween();
+      stopPhaseTween();
     } catch (error) {
       console.error('Texture preload warning:', error);
-    } finally {
-      if (backgroundBatch.length > 0) {
-        const backgroundPromises = preloadTextures(backgroundBatch);
-        Promise.allSettled(backgroundPromises).catch((error) => {
-          console.warn('Background texture preload warning:', error);
-        });
-      }
-      setTexturesLoaded(true);
-      setIsPackVisible(true);
-      setStatus('pack');
+      setStatus('error');
+      setIsPackVisible(false);
+      setTexturesLoaded(false);
+      return;
     }
-  }, [resolvedHandSize, setCursorSafe, stopPhaseTween, stopStackTween]);
 
-  const handleHandSizeChange = useCallback(
-    (value) => {
-      const nextSize = clampHandSizeValue(value);
-      setHandSizeSetting(nextSize);
-      if (allCards.length > 0) {
-        pickNewHand(allCards, nextSize);
-      }
-    },
-    [allCards, pickNewHand]
-  );
+    setTexturesLoaded(true);
+    setIsPackVisible(true);
+    setStatus('pack');
+  }, [resolvedHandSize, setCursorSafe, stopPhaseTween, stopStackTween]);
 
   useEffect(() => {
     let cancelled = false;
@@ -471,11 +680,6 @@ export default function PackOpener({
     if (!allCards.length || status === 'loading') return;
     pickNewHand(allCards);
   }, [allCards, pickNewHand, status]);
-
-  const updateSparkleIntensity = useCallback((level) => {
-    const clamped = clampSparkleLevel(level);
-    setSparkleIntensity((prev) => (prev === clamped ? prev : clamped));
-  }, []);
 
   const handleCycleTopCard = useCallback(() => {
     if (status !== 'stacked' || stackAnimating || stackCards.length === 0) return;
@@ -600,122 +804,6 @@ export default function PackOpener({
           sparkleIntensity={sparkleIntensity}
         />
       </Suspense>
-
-      <div
-        style={{
-          position: 'absolute',
-          top: '14px',
-          right: '14px',
-          zIndex: 40,
-          display: 'flex',
-          flexDirection: 'column',
-          alignItems: 'flex-end',
-          gap: '8px'
-        }}
-      >
-        <button
-          type="button"
-          onClick={() => setShowSettingsPanel((prev) => !prev)}
-          style={{
-            padding: '8px 12px',
-            borderRadius: '10px',
-            border: '1px solid rgba(255,255,255,0.25)',
-            background: 'rgba(0,0,0,0.58)',
-            color: '#fff',
-            fontSize: '0.78rem',
-            letterSpacing: '0.05em',
-            textTransform: 'uppercase',
-            cursor: 'pointer',
-            backdropFilter: 'blur(6px)'
-          }}
-        >
-          Settings
-        </button>
-
-        {showSettingsPanel && (
-          <div
-            style={{
-              minWidth: '260px',
-              borderRadius: '12px',
-              border: '1px solid rgba(255,255,255,0.24)',
-              background: 'rgba(0,0,0,0.68)',
-              color: '#fff',
-              padding: '12px',
-              backdropFilter: 'blur(8px)'
-            }}
-          >
-            <div
-              style={{
-                fontSize: '0.72rem',
-                textTransform: 'uppercase',
-                letterSpacing: '0.07em',
-                opacity: 0.8,
-                marginBottom: '10px'
-              }}
-            >
-              Sparkle Intensity Meter
-            </div>
-
-            <label style={{ display: 'block' }}>
-              <div
-                style={{
-                  display: 'flex',
-                  justifyContent: 'space-between',
-                  marginBottom: '4px',
-                  fontSize: '0.82rem'
-                }}
-              >
-                <span>Intensity</span>
-                <span>{sparkleIntensity}</span>
-              </div>
-              <input
-                type="range"
-                min={SPARKLE_MIN}
-                max={SPARKLE_MAX}
-                step={1}
-                value={sparkleIntensity}
-                onChange={(e) => updateSparkleIntensity(e.target.value)}
-                style={{ width: '100%' }}
-              />
-            </label>
-            <div style={{ marginTop: '14px' }}>
-              <div
-                style={{
-                  fontSize: '0.72rem',
-                  textTransform: 'uppercase',
-                  letterSpacing: '0.07em',
-                  opacity: 0.8,
-                  marginBottom: '10px'
-                }}
-              >
-                Pack Size Meter
-              </div>
-              <label style={{ display: 'block' }}>
-                <div
-                  style={{
-                    display: 'flex',
-                    justifyContent: 'space-between',
-                    marginBottom: '4px',
-                    fontSize: '0.82rem'
-                  }}
-                >
-                  <span>Cards in pack</span>
-                  <span>{resolvedHandSize}</span>
-                </div>
-                <input
-                  type="range"
-                  min={1}
-                  max={20}
-                  step={1}
-                  value={handSizeSetting}
-                  onChange={(e) => handleHandSizeChange(e.target.value)}
-                  style={{ width: '100%' }}
-                />
-              </label>
-            </div>
-          </div>
-        )}
-      </div>
 
       {status === 'pack' && (
         <h1

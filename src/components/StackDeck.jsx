@@ -2,11 +2,11 @@ import Card from './Card';
 import * as THREE from 'three';
 import { useRef, useState } from 'react';
 import { useFrame } from '@react-three/fiber';
+import { getCollageTransform } from './collageLayout';
 
 const STACK_X_STEP = 0.045;
 const STACK_Y_STEP = 0.016;
 const STACK_Z_STEP = 0.045;
-const LIST_SPACING = 1.18;
 const STACK_DROPPED_Y = -1.7;
 const STACK_BASE_SCALE = 1.32;
 const LIST_BASE_SCALE = 0.74;
@@ -41,6 +41,7 @@ export default function StackDeck({
   const safeCollageCards = collageCards || [];
   const hasDeckCards = safeCards.length > 0;
   const hasAnyCards = hasDeckCards || safeCollageCards.length > 0 || movingCard;
+  const collageTargetCount = safeCollageCards.length + (movingCard ? 1 : 0);
 
   const lastIndex = Math.max(safeCards.length - 1, 0);
   const getBasePosition = (stackIndex) => [
@@ -48,18 +49,6 @@ export default function StackDeck({
     stackIndex * STACK_Y_STEP,
     -stackIndex * STACK_Z_STEP
   ];
-  const getListTransform = (index, total) => {
-    const center = (Math.max(total, 1) - 1) / 2;
-    return {
-      position: [
-        (index - center) * LIST_SPACING,
-        2.32 + Math.cos((index + 1) * 0.9) * 0.06,
-        0.85 - index * 0.02
-      ],
-      rotation: [0, 0, (index - center) * 0.05]
-    };
-  };
-
   const resetTilt = () => {
     tiltTargetRef.current.x = 0;
     tiltTargetRef.current.y = 0;
@@ -94,7 +83,7 @@ export default function StackDeck({
   return (
     <group position={[0, -0.15, 0]}>
       {safeCollageCards.map((card, index) => {
-        const transform = getListTransform(index, safeCollageCards.length + (movingCard ? 1 : 0));
+        const transform = getCollageTransform(index, Math.max(1, collageTargetCount));
         return (
           <Card
             key={`collage-${card.card_id}`}
@@ -114,7 +103,18 @@ export default function StackDeck({
             onCardTap={null}
             finishType={card.finish_type || 'normal'}
             sparkleIntensity={sparkleIntensity}
+            sparklePalette={card.vfxSparklePalette}
+            sparklePaletteKey={card.vfxSparklePaletteKey}
+            diagonalPalette={card.vfxDiagonalPalette}
+            diagonalPaletteKey={card.vfxDiagonalPaletteKey}
+            hasExplicitPalette={card.vfxHasExplicitPalette}
+            sparkleVfxFactor={card.vfxSparkleFactor}
+            diagonalCoverage={card.vfxDiagonalCoverage}
+            rarity={card.rarity}
             onCursorChange={onCursorChange}
+            sparkleSettings={card.sparkleSettings}
+            shimmerSettings={card.shimmerSettings}
+            priceLabelSettings={card.priceLabelSettings}
           />
         );
       })}
@@ -199,9 +199,20 @@ export default function StackDeck({
               interactive={false}
               baseScale={STACK_BASE_SCALE}
               onCardTap={null}
-              finishType={card.finish_type || 'normal'}
-              sparkleIntensity={sparkleIntensity}
-            />
+            finishType={card.finish_type || 'normal'}
+            sparkleIntensity={sparkleIntensity}
+            sparklePalette={card.vfxSparklePalette}
+            sparklePaletteKey={card.vfxSparklePaletteKey}
+            diagonalPalette={card.vfxDiagonalPalette}
+            diagonalPaletteKey={card.vfxDiagonalPaletteKey}
+            hasExplicitPalette={card.vfxHasExplicitPalette}
+            sparkleVfxFactor={card.vfxSparkleFactor}
+            diagonalCoverage={card.vfxDiagonalCoverage}
+            rarity={card.rarity}
+            sparkleSettings={card.sparkleSettings}
+            shimmerSettings={card.shimmerSettings}
+            priceLabelSettings={card.priceLabelSettings}
+          />
           );
         })}
       </group>
@@ -209,10 +220,7 @@ export default function StackDeck({
       {movingCard && (() => {
         const t = stackAnimProgress;
         const easedT = t * t * (3 - 2 * t);
-        const target = getListTransform(
-          Math.max(movingToIndex, 0),
-          safeCollageCards.length + 1
-        );
+        const target = getCollageTransform(Math.max(movingToIndex, 0), Math.max(1, collageTargetCount));
         const liftArc = Math.sin(Math.PI * t);
         const forwardPush = Math.sin(Math.PI * t) * 0.22;
         const position = [
@@ -245,6 +253,17 @@ export default function StackDeck({
             onCardTap={null}
             finishType={movingCard.finish_type || 'normal'}
             sparkleIntensity={sparkleIntensity}
+            sparklePalette={movingCard.vfxSparklePalette}
+            sparklePaletteKey={movingCard.vfxSparklePaletteKey}
+            diagonalPalette={movingCard.vfxDiagonalPalette}
+            diagonalPaletteKey={movingCard.vfxDiagonalPaletteKey}
+            hasExplicitPalette={movingCard.vfxHasExplicitPalette}
+            sparkleVfxFactor={movingCard.vfxSparkleFactor}
+            diagonalCoverage={movingCard.vfxDiagonalCoverage}
+            rarity={movingCard.rarity}
+            sparkleSettings={movingCard.sparkleSettings}
+            shimmerSettings={movingCard.shimmerSettings}
+            priceLabelSettings={movingCard.priceLabelSettings}
           />
         );
       })()}

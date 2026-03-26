@@ -115,6 +115,17 @@ export default function CardHand({
             onHoverOut={handleCardLeave}
             finishType={card.finish_type || 'normal'}
             sparkleIntensity={sparkleIntensity}
+            sparklePalette={card.vfxSparklePalette}
+            sparklePaletteKey={card.vfxSparklePaletteKey}
+            diagonalPalette={card.vfxDiagonalPalette}
+            diagonalPaletteKey={card.vfxDiagonalPaletteKey}
+            hasExplicitPalette={card.vfxHasExplicitPalette}
+            sparkleVfxFactor={card.vfxSparkleFactor}
+            diagonalCoverage={card.vfxDiagonalCoverage}
+            rarity={card.rarity}
+            sparkleSettings={card.sparkleSettings}
+            shimmerSettings={card.shimmerSettings}
+            priceLabelSettings={card.priceLabelSettings}
             showPricePanel={focusedIndex === index}
             marketPrice={getPriceValue(card, ['market_price', 'marketPrice', 'price_market'])}
             instantBuyBackPrice={getPriceValue(card, [

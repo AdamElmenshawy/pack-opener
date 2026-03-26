@@ -9,6 +9,10 @@ const PROXIES = [
   {
     prefix: '/api/verifai-images',
     targetBase: 'https://ocs-verifai-public-images.s3.amazonaws.com'
+  },
+  {
+    prefix: '/gradient-images',
+    targetBase: 'https://images.gradientcollects.com'
   }
 ]
 

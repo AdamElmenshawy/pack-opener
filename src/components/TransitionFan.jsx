@@ -1,19 +1,6 @@
 import * as THREE from 'three';
 import Card from './Card';
-
-const LIST_SPACING = 1.18;
-
-const getListTransform = (index, total) => {
-  const center = (Math.max(total, 1) - 1) / 2;
-  const x = (index - center) * LIST_SPACING;
-  const y = 2.32 + Math.cos((index + 1) * 0.9) * 0.06;
-  const z = 0.85 - index * 0.02;
-  const rotZ = (index - center) * 0.05;
-  return {
-    position: [x, y, z],
-    rotation: [0, 0, rotZ]
-  };
-};
+import { getCollageTransform } from './collageLayout';
 
 const getFanPosition = (index, total) => {
   const radius = 11;
@@ -49,7 +36,7 @@ export default function TransitionFan({
     <group position={[0, 0, 0]}>
       {cards.map((card, index) => {
         const sourceIndex = indexById.get(card.card_id) ?? index;
-        const from = getListTransform(sourceIndex, sourceOrder.length);
+        const from = getCollageTransform(sourceIndex, sourceOrder.length, sourceOrder.length);
         const toPos = getFanPosition(index, cards.length);
         const toRot = getFanRotation(index, cards.length);
 
@@ -83,6 +70,17 @@ export default function TransitionFan({
             onCardTap={null}
             finishType={card.finish_type || 'normal'}
             sparkleIntensity={sparkleIntensity}
+            sparklePalette={card.vfxSparklePalette}
+            sparklePaletteKey={card.vfxSparklePaletteKey}
+            diagonalPalette={card.vfxDiagonalPalette}
+            diagonalPaletteKey={card.vfxDiagonalPaletteKey}
+            hasExplicitPalette={card.vfxHasExplicitPalette}
+            sparkleVfxFactor={card.vfxSparkleFactor}
+            diagonalCoverage={card.vfxDiagonalCoverage}
+            rarity={card.rarity}
+            sparkleSettings={card.sparkleSettings}
+            shimmerSettings={card.shimmerSettings}
+            priceLabelSettings={card.priceLabelSettings}
           />
         );
       })}

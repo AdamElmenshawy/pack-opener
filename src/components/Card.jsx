@@ -1,5 +1,5 @@
 // src/components/Card.jsx
-import { memo, useEffect, useMemo, useRef } from 'react';
+import { memo, useEffect, useMemo, useRef, useState } from 'react';
 import { useFrame } from '@react-three/fiber';
 import { Html, RoundedBox, useTexture } from '@react-three/drei';
 import * as THREE from 'three';
@@ -32,7 +32,160 @@ const DEFAULT_SPARKLE_INTENSITY = 6;
 
 let sharedAlphaMap = null;
 const sharedFinishTextures = {};
-let sharedSparkleTexture = null;
+const SPARKLE_TEXTURE_CACHE = new Map();
+const DIAGONAL_TEXTURE_CACHE = new Map();
+const DEFAULT_SPARKLE_PALETTE = ['#bfefff', '#6ea4ff', '#ffeaa4'];
+const RARITY_TINTS = {
+  chase: '#fff9d0',
+  legendary: '#ffd8f0',
+  epic: '#c9b7ff',
+  rare: '#9ef6ff',
+  common: '#bfefff'
+};
+
+const DEFAULT_SPARKLE_SETTINGS = {
+  enabled: true,
+  opacity: 1,
+  intensity: 1,
+  size: 0.5,
+  speed: 0.5,
+  quantity: 0.65
+};
+
+const DEFAULT_SHIMMER_SETTINGS = {
+  enabled: true,
+  opacity: 0.55,
+  intensity: 0.6,
+  size: 0.35,
+  speed: 0.5
+};
+
+const DEFAULT_PRICE_LABEL_SETTINGS = {
+  enabled: true,
+  fontSize: '11px',
+  fontColor: '#ffffff'
+};
+
+const PALETTE_SAMPLE_SIZE = 40;
+const PALETTE_MAX_COLORS = 3;
+const PALETTE_QUANTIZATION_STEP = 16;
+const PALETTE_MIN_ALPHA = 32;
+const PALETTE_SKIP_WHITE = 248;
+const PALETTE_SKIP_BLACK = 10;
+
+function quantizeChannel(value) {
+  return Math.max(
+    0,
+    Math.min(255, Math.round(value / PALETTE_QUANTIZATION_STEP) * PALETTE_QUANTIZATION_STEP)
+  );
+}
+
+function colorKeyToHex(key = '') {
+  const parts = key.split(',').map((part) => Number(part) || 0);
+  const [r, g, b] = parts;
+  const hex = ((1 << 24) + (r << 16) + (g << 8) + b).toString(16).slice(1);
+  return `#${hex}`;
+}
+
+function shouldSkipColor(r, g, b) {
+  const average = (r + g + b) / 3;
+  return average >= PALETTE_SKIP_WHITE || average <= PALETTE_SKIP_BLACK;
+}
+
+function buildPaletteFromImageData(data = [], fallbackPalette = []) {
+  const counts = new Map();
+  for (let i = 0; i < data.length; i += 4) {
+    const alpha = data[i + 3];
+    if (alpha < PALETTE_MIN_ALPHA) continue;
+    const r = quantizeChannel(data[i]);
+    const g = quantizeChannel(data[i + 1]);
+    const b = quantizeChannel(data[i + 2]);
+    if (shouldSkipColor(r, g, b)) continue;
+    const key = `${r},${g},${b}`;
+    counts.set(key, (counts.get(key) || 0) + 1);
+  }
+
+  if (counts.size === 0) {
+    return fallbackPalette.slice(0, PALETTE_MAX_COLORS);
+  }
+
+  const sorted = Array.from(counts.entries())
+    .sort(([, a], [, b]) => b - a)
+    .map(([key]) => colorKeyToHex(key))
+    .filter((value, index, array) => array.indexOf(value) === index);
+
+  if (sorted.length === 0) {
+    return fallbackPalette.slice(0, PALETTE_MAX_COLORS);
+  }
+
+  return sorted.slice(0, PALETTE_MAX_COLORS);
+}
+
+function useDerivedPaletteFromImage(imageUrl, fallbackPalette, dependencyKey) {
+  const fallbackKey = Array.isArray(fallbackPalette) ? fallbackPalette.join('|') : '';
+  const [derivedPalette, setDerivedPalette] = useState([]);
+
+  useEffect(() => {
+    if (!imageUrl || typeof document === 'undefined') {
+      setDerivedPalette([]);
+      return undefined;
+    }
+
+    let cancelled = false;
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    img.decoding = 'async';
+
+    const cleanup = () => {
+      img.onload = null;
+      img.onerror = null;
+    };
+
+    img.onload = () => {
+      if (cancelled) return;
+      const canvas = document.createElement('canvas');
+      canvas.width = PALETTE_SAMPLE_SIZE;
+      canvas.height = PALETTE_SAMPLE_SIZE;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) {
+        setDerivedPalette([]);
+        cleanup();
+        return;
+      }
+
+      try {
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+      } catch (error) {
+        console.warn('Palette sampling failed:', error);
+        setDerivedPalette([]);
+        cleanup();
+        return;
+      }
+
+      const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
+      const palette = buildPaletteFromImageData(imageData, fallbackPalette);
+      if (!cancelled) {
+        setDerivedPalette(palette);
+      }
+    };
+
+    img.onerror = () => {
+      if (!cancelled) {
+        setDerivedPalette([]);
+      }
+      cleanup();
+    };
+
+    img.src = imageUrl;
+
+    return () => {
+      cancelled = true;
+      cleanup();
+    };
+  }, [imageUrl, dependencyKey, fallbackKey]);
+
+  return derivedPalette;
+}
 
 function makeRoundedAlphaMap(size = 256, radius = 24) {
   const canvas = document.createElement('canvas');
@@ -265,35 +418,106 @@ function getSparkleRepeat(intensity) {
   return THREE.MathUtils.lerp(1.05, 1.35, (normalized - 1) / 9);
 }
 
-function paintSparkleTexture(ctx, size) {
+function clamp01(value) {
+  if (typeof value !== 'number') return 0;
+  return Math.max(0, Math.min(1, value));
+}
+
+function colorToRgba(value, alpha) {
+  let color;
+  try {
+    color = new THREE.Color(value);
+  } catch {
+    color = new THREE.Color('#ffffff');
+  }
+  const safeAlpha = Math.max(0, Math.min(1, alpha));
+  const r = Math.round(color.r * 255);
+  const g = Math.round(color.g * 255);
+  const b = Math.round(color.b * 255);
+  return `rgba(${r},${g},${b},${safeAlpha})`;
+}
+
+function drawTwinkleStar(ctx, x, y, outerRadius, innerRadius, rotation = 0) {
+  const points = 4;
+  ctx.beginPath();
+  for (let index = 0; index < points * 2; index += 1) {
+    const radius = index % 2 === 0 ? outerRadius : innerRadius;
+    const angle = rotation + (Math.PI * index) / points;
+    const px = x + Math.cos(angle) * radius;
+    const py = y + Math.sin(angle) * radius;
+    if (index === 0) {
+      ctx.moveTo(px, py);
+    } else {
+      ctx.lineTo(px, py);
+    }
+  }
+  ctx.closePath();
+}
+
+function drawShineFlare(ctx, x, y, length, width, rotation, color, alpha) {
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.rotate(rotation);
+  const flare = ctx.createLinearGradient(-length, 0, length, 0);
+  flare.addColorStop(0, colorToRgba(color, 0));
+  flare.addColorStop(0.5, colorToRgba(color, alpha));
+  flare.addColorStop(1, colorToRgba(color, 0));
+  ctx.fillStyle = flare;
+  ctx.beginPath();
+  ctx.moveTo(-length, 0);
+  ctx.quadraticCurveTo(-length * 0.25, -width, 0, 0);
+  ctx.quadraticCurveTo(length * 0.25, width, length, 0);
+  ctx.quadraticCurveTo(length * 0.25, -width, 0, 0);
+  ctx.quadraticCurveTo(-length * 0.25, width, -length, 0);
+  ctx.closePath();
+  ctx.fill();
+  ctx.restore();
+}
+
+function paintDiagonalLineTexture(
+  ctx,
+  size,
+  palette,
+  coverage,
+  sizeFactor = 0.5
+) {
   ctx.clearRect(0, 0, size, size);
-  const lineAnchors = [0.05, 0.25, 0.45, 0.65, 0.85];
+  const coverageFactor = clamp01(coverage);
+  if (coverageFactor <= 0) return;
+
+  const normalizedSize = clamp01(sizeFactor);
+  const normalizedPalette =
+    palette && palette.length > 0 ? palette : DEFAULT_SPARKLE_PALETTE;
+  const primaryColor = normalizedPalette[0] || '#ffffff';
+  const secondaryColor = normalizedPalette[1] || primaryColor;
+  const highlightColor = normalizedPalette[2] || secondaryColor;
+  const lineCount = Math.max(1, Math.round(coverageFactor * 6));
   const lineStartY = -size * 0.35;
   const lineEndY = size * 1.35;
   const slope = size;
+  const anchors = Array.from({ length: lineCount }, (_, index) => (index + 0.5) / lineCount);
+  const widthScale = 0.032 + coverageFactor * 0.05 * (0.7 + normalizedSize * 0.9);
 
-  lineAnchors.forEach((anchor) => {
+  anchors.forEach((anchor) => {
     const startX = size * anchor;
     const endX = startX - slope;
     const bandGrad = ctx.createLinearGradient(startX, lineStartY, endX, lineEndY);
-    bandGrad.addColorStop(0, 'rgba(255,255,255,0)');
-    bandGrad.addColorStop(0.2, 'hsla(18,100%,70%,0.5)');
-    bandGrad.addColorStop(0.35, 'hsla(58,100%,72%,0.58)');
-    bandGrad.addColorStop(0.5, 'hsla(185,100%,84%,0.9)');
-    bandGrad.addColorStop(0.65, 'hsla(238,100%,78%,0.6)');
-    bandGrad.addColorStop(0.8, 'hsla(292,100%,76%,0.5)');
-    bandGrad.addColorStop(1, 'rgba(255,255,255,0)');
+    bandGrad.addColorStop(0, colorToRgba(primaryColor, 0));
+    bandGrad.addColorStop(0.2, colorToRgba(secondaryColor, 0.16 + coverageFactor * 0.22));
+    bandGrad.addColorStop(0.5, colorToRgba(highlightColor, 0.52 + coverageFactor * 0.18));
+    bandGrad.addColorStop(0.8, colorToRgba(secondaryColor, 0.14 + coverageFactor * 0.18));
+    bandGrad.addColorStop(1, colorToRgba(primaryColor, 0));
 
     ctx.lineCap = 'round';
     ctx.strokeStyle = bandGrad;
-    ctx.lineWidth = size * 0.085;
+    ctx.lineWidth = size * widthScale;
     ctx.beginPath();
     ctx.moveTo(startX, lineStartY);
     ctx.lineTo(endX, lineEndY);
     ctx.stroke();
 
-    ctx.strokeStyle = 'rgba(255,255,255,0.95)';
-    ctx.lineWidth = size * 0.018;
+    ctx.strokeStyle = colorToRgba('#ffffff', 0.2 + coverageFactor * 0.3);
+    ctx.lineWidth = size * (0.008 + normalizedSize * 0.01);
     ctx.beginPath();
     ctx.moveTo(startX, lineStartY);
     ctx.lineTo(endX, lineEndY);
@@ -301,14 +525,99 @@ function paintSparkleTexture(ctx, size) {
   });
 }
 
-function makeSparkleTexture(size = 512) {
+function paintSparkleTexture(
+  ctx,
+  size,
+  palette,
+  quantityFactor = 0.65,
+  sizeFactor = 0.5
+) {
+  ctx.clearRect(0, 0, size, size);
+  const normalizedSize = clamp01(sizeFactor);
+  const normalizedQuantity = clamp01(quantityFactor);
+  const densityScale = 0.7 + normalizedQuantity * 1.8;
+  const normalizedPalette =
+    palette && palette.length > 0 ? palette : DEFAULT_SPARKLE_PALETTE;
+  const highlightColor = normalizedPalette[2] || normalizedPalette[1] || normalizedPalette[0] || '#ffffff';
+
+  const sparkleCount = Math.max(
+    10,
+    Math.round((18 + normalizedQuantity * 44) * densityScale)
+  );
+  for (let index = 0; index < sparkleCount; index += 1) {
+    const color = normalizedPalette[index % normalizedPalette.length] || highlightColor;
+    const px = ((index * 73) % 1000) / 1000;
+    const py = ((index * 197 + 131) % 1000) / 1000;
+    const twinkle = 0.5 + (((index * 53) % 100) / 100) * 0.5;
+    const x = px * size;
+    const y = py * size;
+    const radius = size * (0.004 + normalizedSize * 0.012 + (index % 3) * 0.0025);
+    const glowRadius = radius * (2.4 + twinkle);
+    const starRotation = ((index * 37) % 360) * (Math.PI / 180);
+
+    const glow = ctx.createRadialGradient(x, y, 0, x, y, glowRadius);
+    glow.addColorStop(0, colorToRgba(color, 0.95 * twinkle));
+    glow.addColorStop(0.25, colorToRgba(color, 0.45 * twinkle));
+    glow.addColorStop(1, colorToRgba(color, 0));
+    ctx.fillStyle = glow;
+    ctx.beginPath();
+    ctx.arc(x, y, glowRadius, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.fillStyle = colorToRgba(color, 0.82 * twinkle);
+    drawTwinkleStar(ctx, x, y, radius * 2.1, radius * 0.55, starRotation);
+    ctx.fill();
+
+    ctx.fillStyle = colorToRgba('#ffffff', 0.96 * twinkle);
+    drawTwinkleStar(ctx, x, y, radius * 1.15, radius * 0.28, starRotation + Math.PI / 4);
+    ctx.fill();
+
+    drawShineFlare(
+      ctx,
+      x,
+      y,
+      glowRadius * 0.95,
+      radius * 0.95,
+      starRotation + Math.PI / 8,
+      '#ffffff',
+      0.42 * twinkle
+    );
+    drawShineFlare(
+      ctx,
+      x,
+      y,
+      glowRadius * 0.7,
+      radius * 0.55,
+      starRotation + Math.PI / 2.8,
+      color,
+      0.35 * twinkle
+    );
+
+    ctx.strokeStyle = colorToRgba(color, 0.42 * twinkle);
+    ctx.lineWidth = Math.max(0.8, radius * 0.22);
+    ctx.beginPath();
+    ctx.moveTo(x - glowRadius * 0.8, y);
+    ctx.lineTo(x + glowRadius * 0.8, y);
+    ctx.moveTo(x, y - glowRadius * 0.95);
+    ctx.lineTo(x, y + glowRadius * 0.95);
+    ctx.stroke();
+  }
+}
+
+function makeSparkleTexture({
+  size = 512,
+  palette = DEFAULT_SPARKLE_PALETTE,
+  quantityFactor = DEFAULT_SPARKLE_SETTINGS.quantity,
+  sizeFactor = DEFAULT_SPARKLE_SETTINGS.size
+}) {
+  if (typeof document === 'undefined') return null;
   const canvas = document.createElement('canvas');
   canvas.width = size;
   canvas.height = size;
   const ctx = canvas.getContext('2d');
   if (!ctx) return null;
 
-  paintSparkleTexture(ctx, size);
+  paintSparkleTexture(ctx, size, palette, quantityFactor, sizeFactor);
   const texture = new THREE.CanvasTexture(canvas);
   texture.colorSpace = THREE.NoColorSpace;
   texture.wrapS = THREE.RepeatWrapping;
@@ -319,11 +628,76 @@ function makeSparkleTexture(size = 512) {
   return texture;
 }
 
-function getSparkleTexture() {
-  if (!sharedSparkleTexture) {
-    sharedSparkleTexture = makeSparkleTexture(512);
+function getSparkleTextureForOptions({
+  palette,
+  quantityFactor = DEFAULT_SPARKLE_SETTINGS.quantity,
+  sizeFactor = DEFAULT_SPARKLE_SETTINGS.size
+}) {
+  const normalizedPalette =
+    palette && palette.length > 0 ? palette : DEFAULT_SPARKLE_PALETTE;
+  const key = `${normalizedPalette.join('|')}|q${clamp01(quantityFactor).toFixed(
+    3
+  )}|s${clamp01(sizeFactor).toFixed(3)}`;
+  if (SPARKLE_TEXTURE_CACHE.has(key)) {
+    return SPARKLE_TEXTURE_CACHE.get(key);
   }
-  return sharedSparkleTexture;
+  const texture = makeSparkleTexture({
+    palette: normalizedPalette,
+    quantityFactor: clamp01(quantityFactor),
+    sizeFactor: clamp01(sizeFactor)
+  });
+  if (texture) {
+    SPARKLE_TEXTURE_CACHE.set(key, texture);
+  }
+  return texture;
+}
+
+function makeDiagonalTexture({
+  size = 512,
+  palette = DEFAULT_SPARKLE_PALETTE,
+  diagonalCoverage = 1,
+  sizeFactor = DEFAULT_SHIMMER_SETTINGS.size
+}) {
+  if (typeof document === 'undefined') return null;
+  const canvas = document.createElement('canvas');
+  canvas.width = size;
+  canvas.height = size;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return null;
+
+  paintDiagonalLineTexture(ctx, size, palette, diagonalCoverage, sizeFactor);
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.NoColorSpace;
+  texture.wrapS = THREE.RepeatWrapping;
+  texture.wrapT = THREE.RepeatWrapping;
+  texture.minFilter = THREE.LinearMipmapLinearFilter;
+  texture.magFilter = THREE.LinearFilter;
+  texture.needsUpdate = true;
+  return texture;
+}
+
+function getDiagonalTextureForOptions({
+  palette,
+  diagonalCoverage,
+  sizeFactor = DEFAULT_SHIMMER_SETTINGS.size
+}) {
+  const normalizedPalette =
+    palette && palette.length > 0 ? palette : DEFAULT_SPARKLE_PALETTE;
+  const key = `${normalizedPalette.join('|')}|c${clamp01(diagonalCoverage).toFixed(
+    3
+  )}|s${clamp01(sizeFactor).toFixed(3)}`;
+  if (DIAGONAL_TEXTURE_CACHE.has(key)) {
+    return DIAGONAL_TEXTURE_CACHE.get(key);
+  }
+  const texture = makeDiagonalTexture({
+    palette: normalizedPalette,
+    diagonalCoverage: clamp01(diagonalCoverage),
+    sizeFactor: clamp01(sizeFactor)
+  });
+  if (texture) {
+    DIAGONAL_TEXTURE_CACHE.set(key, texture);
+  }
+  return texture;
 }
 
 function CardContentWithTexture({
@@ -390,7 +764,12 @@ function CardContentFallback({ alphaMap = null }) {
   );
 }
 
-function PricePanel({ marketPrice, instantBuyBackPrice }) {
+function PricePanel({
+  marketPrice,
+  instantBuyBackPrice,
+  fontSize = DEFAULT_PRICE_LABEL_SETTINGS.fontSize,
+  fontColor = DEFAULT_PRICE_LABEL_SETTINGS.fontColor
+}) {
   const marketValue = String(marketPrice ?? '').trim();
   const buyBackValue = String(instantBuyBackPrice ?? '').trim();
 
@@ -407,8 +786,8 @@ function PricePanel({ marketPrice, instantBuyBackPrice }) {
           borderRadius: '10px',
           padding: '8px 10px',
           background: 'rgba(0,0,0,0.58)',
-          color: '#fff',
-          fontSize: '11px',
+          color: fontColor,
+          fontSize,
           fontFamily: 'system-ui',
           lineHeight: 1.35
         }}
@@ -460,8 +839,20 @@ function Card({
   finishType = 'normal',
   finishEffectSettings = DEFAULT_FINISH_EFFECT_SETTINGS,
   sparkleIntensity = DEFAULT_SPARKLE_INTENSITY,
+  sparklePalette = DEFAULT_SPARKLE_PALETTE,
+  sparklePaletteKey = DEFAULT_SPARKLE_PALETTE.join('|'),
+  diagonalPalette = DEFAULT_SPARKLE_PALETTE,
+  diagonalPaletteKey = DEFAULT_SPARKLE_PALETTE.join('|'),
+  hasExplicitPalette = false,
+  sparkleVfxFactor = null,
+  diagonalCoverage = 1,
+  rarity = 'common',
+  sparkleSettings = DEFAULT_SPARKLE_SETTINGS,
+  shimmerSettings = DEFAULT_SHIMMER_SETTINGS,
+  priceLabelSettings = DEFAULT_PRICE_LABEL_SETTINGS,
   onCursorChange = () => {}
-  , renderOrder = 0
+  ,
+  renderOrder = 0
 }) {
   const groupRef = useRef();
   useEffect(() => {
@@ -472,6 +863,7 @@ function Card({
   const frontMaterialRef = useRef();
   const backMaterialRef = useRef();
   const finishMaterialRef = useRef();
+  const diagonalMaterialRef = useRef();
   const sparkleMaterialRef = useRef();
   const hoverTiltRef = useRef({ x: 0, y: 0 });
   const isDraggingRef = useRef(false);
@@ -500,8 +892,80 @@ function Card({
       finishTexture?.dispose?.();
     };
   }, [finishTexture]);
+  const normalizedCoverage = clamp01(diagonalCoverage);
+  const resolvedSparkleSettings = {
+    ...DEFAULT_SPARKLE_SETTINGS,
+    ...sparkleSettings
+  };
+  const sparkleOpacitySetting = clamp01(resolvedSparkleSettings.opacity);
+  const sparkleIntensitySetting = clamp01(resolvedSparkleSettings.intensity);
+  const sparkleSizeSetting = clamp01(resolvedSparkleSettings.size);
+  const sparkleSpeedSetting = clamp01(resolvedSparkleSettings.speed);
+  const sparkleQuantitySetting = clamp01(resolvedSparkleSettings.quantity);
+  const sparkleEnabled = resolvedSparkleSettings.enabled !== false;
+  const resolvedShimmerSettings = {
+    ...DEFAULT_SHIMMER_SETTINGS,
+    ...shimmerSettings
+  };
+  const shimmerEnabledOverride = resolvedShimmerSettings.enabled !== false;
+  const shimmerOpacitySetting = clamp01(resolvedShimmerSettings.opacity);
+  const shimmerIntensitySetting = clamp01(resolvedShimmerSettings.intensity);
+  const shimmerSizeSetting = clamp01(resolvedShimmerSettings.size);
+  const shimmerSpeedSetting = clamp01(resolvedShimmerSettings.speed);
+  const resolvedPriceLabelSettings = {
+    ...DEFAULT_PRICE_LABEL_SETTINGS,
+    ...priceLabelSettings
+  };
+  const basePalette =
+    sparklePalette && sparklePalette.length > 0 ? sparklePalette : DEFAULT_SPARKLE_PALETTE;
+  const fallbackPaletteKey =
+    sparklePaletteKey || basePalette.join('|') || DEFAULT_SPARKLE_PALETTE.join('|');
+  const diagonalBasePalette =
+    diagonalPalette && diagonalPalette.length > 0 ? diagonalPalette : basePalette;
+  const diagonalFallbackPaletteKey =
+    diagonalPaletteKey || diagonalBasePalette.join('|') || fallbackPaletteKey;
+  const derivedPalette = useDerivedPaletteFromImage(
+    frontUrl,
+    basePalette,
+    fallbackPaletteKey
+  );
+  const effectivePalette =
+    hasExplicitPalette
+      ? basePalette
+      : derivedPalette && derivedPalette.length > 0
+        ? derivedPalette
+        : basePalette;
+  const effectivePaletteKey =
+    hasExplicitPalette
+      ? fallbackPaletteKey
+      : derivedPalette && derivedPalette.length > 0
+        ? derivedPalette.join('|')
+        : fallbackPaletteKey;
+  const effectiveDiagonalPalette = hasExplicitPalette ? diagonalBasePalette : effectivePalette;
+  const effectiveDiagonalPaletteKey = hasExplicitPalette
+    ? diagonalFallbackPaletteKey
+    : effectivePaletteKey;
+  const paletteBaseColor = useMemo(() => {
+    const baseColor = new THREE.Color(effectivePalette[0] || DEFAULT_SPARKLE_PALETTE[0]);
+    const rarityTint = new THREE.Color(RARITY_TINTS[rarity] || DEFAULT_SPARKLE_PALETTE[0]);
+    return baseColor.lerp(rarityTint, 0.25);
+  }, [effectivePaletteKey, rarity]);
+  const sparkleOptionsKey = [
+    effectivePaletteKey,
+    `q${sparkleQuantitySetting.toFixed(3)}`,
+    `s${sparkleSizeSetting.toFixed(3)}`
+  ].join('|');
+  const diagonalOptionsKey = [
+    effectiveDiagonalPaletteKey,
+    `c${normalizedCoverage.toFixed(3)}`,
+    `s${shimmerSizeSetting.toFixed(3)}`
+  ].join('|');
   const sparkleTexture = useMemo(() => {
-    const baseTexture = getSparkleTexture();
+    const baseTexture = getSparkleTextureForOptions({
+      palette: effectivePalette,
+      quantityFactor: sparkleQuantitySetting,
+      sizeFactor: sparkleSizeSetting
+    });
     if (!baseTexture) return null;
     const texture = baseTexture.clone();
     texture.wrapS = THREE.RepeatWrapping;
@@ -510,12 +974,32 @@ function Card({
     texture.rotation = 0;
     texture.needsUpdate = true;
     return texture;
-  }, []);
+  }, [sparkleOptionsKey]);
   useEffect(() => {
     return () => {
       sparkleTexture?.dispose?.();
     };
   }, [sparkleTexture]);
+  const diagonalTexture = useMemo(() => {
+    const baseTexture = getDiagonalTextureForOptions({
+      palette: effectiveDiagonalPalette,
+      diagonalCoverage: normalizedCoverage,
+      sizeFactor: shimmerSizeSetting
+    });
+    if (!baseTexture) return null;
+    const texture = baseTexture.clone();
+    texture.wrapS = THREE.RepeatWrapping;
+    texture.wrapT = THREE.RepeatWrapping;
+    texture.center.set(0.5, 0.5);
+    texture.rotation = 0;
+    texture.needsUpdate = true;
+    return texture;
+  }, [diagonalOptionsKey]);
+  useEffect(() => {
+    return () => {
+      diagonalTexture?.dispose?.();
+    };
+  }, [diagonalTexture]);
   
   const targetPosition = useRef(new THREE.Vector3(...position));
   const targetRotation = useRef(new THREE.Euler(...rotation));
@@ -524,10 +1008,13 @@ function Card({
   const isFocused = focusedIndex === index;
   const isDimmed = enableDimming && focusedIndex !== null && focusedIndex !== index;
   const shouldRenderFinishEffect = isFinishEffectEnabled(finishType, finishEffectSettings);
-  const sparkleOpacityScale = getSparkleOpacityScale(sparkleIntensity);
-  const sparkleMotionScale = getSparkleMotionScale(sparkleIntensity);
-  const sparkleVisibility = getSparkleVisibility(sparkleIntensity);
-  const sparkleRepeat = getSparkleRepeat(sparkleIntensity);
+  const cardSparkleIntensity = sparkleIntensity * THREE.MathUtils.lerp(0.85, 1.4, sparkleIntensitySetting);
+  const sparkleOpacityScale = getSparkleOpacityScale(cardSparkleIntensity);
+  const sparkleMotionScale = getSparkleMotionScale(cardSparkleIntensity);
+  const sparkleVisibility = getSparkleVisibility(cardSparkleIntensity);
+  const sparkleRepeat = getSparkleRepeat(cardSparkleIntensity);
+  const sparkleEffectFactor = sparkleVfxFactor === null ? 1 : clamp01(sparkleVfxFactor);
+  const shimmerActive = shouldRenderFinishEffect && shimmerEnabledOverride;
   const updateTiltFromWorldPoint = (worldPoint) => {
     if (!groupRef.current) return;
     const localPoint = groupRef.current.worldToLocal(worldPoint.clone());
@@ -535,7 +1022,7 @@ function Card({
     hoverTiltRef.current.y = THREE.MathUtils.clamp(localPoint.y / 0.95, -1, 1);
   };
 
-  useFrame((_state, delta) => {
+  useFrame((state, delta) => {
     if (!groupRef.current) return;
 
     // Update targets based on focus state
@@ -611,31 +1098,65 @@ function Card({
     }
 
     if (finishMaterialRef.current) {
-      const baseOpacity = getFinishBaseOpacity(finishType) * 0.22;
-      const focusBoost = isFocused ? 0.02 : 0;
-      const targetOpacity = shouldRenderFinishEffect
-        ? (baseOpacity + focusBoost) * sparkleOpacityScale
+      const shimmerBoost = shimmerActive
+        ? 1 + shimmerIntensitySetting * 0.25
         : 0;
+      const baseOpacity = shimmerActive
+        ? getFinishBaseOpacity(finishType) * 0.22 * shimmerBoost
+        : 0;
+      const targetOpacity = shimmerActive ? baseOpacity * shimmerOpacitySetting : 0;
       finishMaterialRef.current.opacity = THREE.MathUtils.lerp(
         finishMaterialRef.current.opacity ?? 0,
         targetOpacity,
         getDampFactor(OPACITY_SMOOTHING, delta)
       );
 
-      const sparkleMap = finishMaterialRef.current.map;
-      if (sparkleMap) {
-        // Keep the base finish texture stable; the animated foil sweep is handled by the band layer.
-        sparkleMap.offset.set(0, 0);
-        sparkleMap.rotation = 0;
-        sparkleMap.needsUpdate = true;
+      const finishMap = finishMaterialRef.current.map;
+      if (finishMap) {
+        const shimmerClock =
+          state.clock.getElapsedTime() * THREE.MathUtils.lerp(0.003, 0.02, shimmerSpeedSetting);
+        finishMap.offset.x = shimmerClock % 1;
+        finishMap.offset.y = (shimmerClock * 0.6) % 1;
+        finishMap.repeat.set(1 + shimmerSizeSetting * 0.8, 1 + shimmerSizeSetting * 0.6);
+        finishMap.rotation = shimmerSpeedSetting * 0.08;
+        finishMap.needsUpdate = true;
+      }
+    }
+
+    if (diagonalMaterialRef.current) {
+      const linesActive = shimmerActive && normalizedCoverage > 0;
+      const targetLineOpacity = linesActive
+        ? (0.12 + normalizedCoverage * 0.42) * shimmerOpacitySetting
+        : 0;
+      diagonalMaterialRef.current.opacity = THREE.MathUtils.lerp(
+        diagonalMaterialRef.current.opacity ?? 0,
+        targetLineOpacity,
+        getDampFactor(OPACITY_SMOOTHING, delta)
+      );
+
+      const lineMap = diagonalMaterialRef.current.map;
+      if (lineMap) {
+        const lineClock =
+          state.clock.getElapsedTime() * THREE.MathUtils.lerp(0.08, 0.22, shimmerSpeedSetting);
+        const lineFall = lineClock % 1;
+        lineMap.offset.x = 0;
+        lineMap.offset.y = lineFall;
+        lineMap.rotation = -0.12;
+        lineMap.repeat.set(1 + shimmerSizeSetting * 0.45, 1 + shimmerSizeSetting * 0.45);
+        lineMap.needsUpdate = true;
       }
     }
 
     if (sparkleMaterialRef.current) {
-      const tiltX = groupRef.current.rotation.y;
-      const tiltY = groupRef.current.rotation.x;
-      const targetSparkleOpacity = shouldRenderFinishEffect
-        ? sparkleVisibility + (isFocused ? 0.12 : 0)
+      const sparklesActive = sparkleEnabled && isFocused;
+      const rawVisibility = sparklesActive
+        ? sparkleVisibility * sparkleEffectFactor
+        : 0;
+      const adjustedVisibility =
+        rawVisibility * sparkleOpacitySetting * (1.25 + shimmerIntensitySetting * 0.2);
+      const focusBoost = isFocused ? 0.18 * sparkleOpacitySetting : 0;
+      const targetSparkleOpacity = sparklesActive
+        ? Math.max(adjustedVisibility, 0.18) + focusBoost
         : 0;
       sparkleMaterialRef.current.opacity = THREE.MathUtils.lerp(
         sparkleMaterialRef.current.opacity ?? 0,
@@ -645,14 +1166,23 @@ function Card({
 
       const sparkleMap = sparkleMaterialRef.current.map;
       if (sparkleMap) {
-        const targetOffsetX = tiltX * 0.14 * sparkleMotionScale;
-        const targetOffsetY = tiltY * 0.12 * sparkleMotionScale;
+        const speedScale = THREE.MathUtils.lerp(0.75, 1.55, sparkleSpeedSetting);
+        const effectiveMotionScale = sparklesActive
+          ? Math.max(0.35, sparkleMotionScale * speedScale)
+          : sparkleMotionScale;
+        const finalRepeat =
+          sparkleRepeat * (0.88 + sparkleSizeSetting * 0.16 + sparkleQuantitySetting * 0.06);
+        const animationPhase = state.clock.getElapsedTime();
+        const downwardFlow = animationPhase * 0.085 * effectiveMotionScale;
+        const pulseRepeat = finalRepeat * (1 + Math.sin(animationPhase * 1.8) * 0.02);
+        const targetOffsetX = 0;
+        const targetOffsetY = -downwardFlow;
         const textureDamp = getDampFactor(8.6, delta);
-    sparkleMap.offset.x = THREE.MathUtils.lerp(
-      sparkleMap.offset.x,
-      targetOffsetX,
-      textureDamp
-    );
+        sparkleMap.offset.x = THREE.MathUtils.lerp(
+          sparkleMap.offset.x,
+          targetOffsetX,
+          textureDamp
+        );
         sparkleMap.offset.y = THREE.MathUtils.lerp(
           sparkleMap.offset.y,
           targetOffsetY,
@@ -663,14 +1193,22 @@ function Card({
           0,
           textureDamp
         );
-        sparkleMap.repeat.set(sparkleRepeat, sparkleRepeat);
+        sparkleMap.repeat.set(pulseRepeat, pulseRepeat);
         sparkleMap.needsUpdate = true;
       }
 
-      const hue = 0.58 + tiltX * 0.08;
-      const saturation = 0.9;
-      const lightness = 0.82 + sparkleVisibility * 0.08;
-      sparkleMaterialRef.current.color.setHSL(hue, saturation, lightness);
+      const dynamicColor = paletteBaseColor.clone();
+      const colorHsl = { h: 0, s: 0, l: 0 };
+      dynamicColor.getHSL(colorHsl);
+      const shimmerWave = Math.sin(state.clock.getElapsedTime() * 2.4) * 0.03;
+      const dynamicHue = (colorHsl.h + Math.sin(state.clock.getElapsedTime() * 0.3) * 0.022 + 1) % 1;
+      const dynamicSaturation = Math.min(1, colorHsl.s + 0.2);
+      const dynamicLightness = clamp01(colorHsl.l + rawVisibility * 0.12 + 0.18 + shimmerWave);
+      sparkleMaterialRef.current.color.setHSL(
+        dynamicHue,
+        dynamicSaturation,
+        dynamicLightness
+      );
     }
   });
 
@@ -759,23 +1297,41 @@ function Card({
       <mesh position={[0, 0, 0.0312]}>
         <planeGeometry args={[CARD_WIDTH, CARD_HEIGHT]} />
         <meshBasicMaterial
+          ref={diagonalMaterialRef}
+          map={diagonalTexture || null}
+          alphaMap={alphaMap || null}
+          color="#ffffff"
+          transparent
+          alphaTest={0.005}
+          depthWrite={false}
+          toneMapped={false}
+          side={THREE.FrontSide}
+          blending={THREE.NormalBlending}
+          opacity={0}
+        />
+      </mesh>
+      <mesh position={[0, 0, 0.0319]}>
+        <planeGeometry args={[CARD_WIDTH, CARD_HEIGHT]} />
+        <meshBasicMaterial
           ref={sparkleMaterialRef}
           map={sparkleTexture || null}
           alphaMap={alphaMap || null}
           color="#bfefff"
           transparent
-          alphaTest={0.03}
+          alphaTest={0.005}
           depthWrite={false}
           toneMapped={false}
           side={THREE.FrontSide}
-          blending={THREE.AdditiveBlending}
+          blending={THREE.NormalBlending}
           opacity={0}
         />
       </mesh>
-      {showPricePanel && (
+      {showPricePanel && resolvedPriceLabelSettings.enabled && (
         <PricePanel
           marketPrice={marketPrice}
           instantBuyBackPrice={instantBuyBackPrice}
+          fontSize={resolvedPriceLabelSettings.fontSize}
+          fontColor={resolvedPriceLabelSettings.fontColor}
         />
       )}
     </group>
@@ -802,6 +1358,10 @@ function areCardPropsEqual(prev, next) {
     prev.finishType === next.finishType &&
     prev.finishEffectSettings === next.finishEffectSettings &&
     prev.sparkleIntensity === next.sparkleIntensity &&
+    prev.sparklePaletteKey === next.sparklePaletteKey &&
+    prev.sparkleVfxFactor === next.sparkleVfxFactor &&
+    prev.diagonalCoverage === next.diagonalCoverage &&
+    prev.rarity === next.rarity &&
     prev.renderOrder === next.renderOrder &&
     prev.onCursorChange === next.onCursorChange
   );
