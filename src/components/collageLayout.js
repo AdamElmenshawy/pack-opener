@@ -1,8 +1,10 @@
 const COLLAGE_MAX_COLUMNS = 4;
 const COLLAGE_INLINE_CARD_LIMIT = 10;
 const COLLAGE_COLUMN_SPACING = 1.6;
-const COLLAGE_MIN_INLINE_SPACING = 1.02;
+const COLLAGE_INLINE_COLUMN_SPACING = 1.86;
+const COLLAGE_MIN_INLINE_SPACING = 1.7;
 const COLLAGE_ROW_SPACING = 0.78;
+const COLLAGE_LAYER_Z_STEP = 0.035;
 
 function buildRowCounts(total) {
   const safeTotal = Math.max(1, total);
@@ -43,7 +45,7 @@ function getRowAndColumn(index, rowCounts) {
 
 function getColumnSpacing(count) {
   const safeCount = Math.max(1, count);
-  if (safeCount <= 4) return COLLAGE_COLUMN_SPACING;
+  if (safeCount <= COLLAGE_INLINE_CARD_LIMIT) return COLLAGE_INLINE_COLUMN_SPACING;
   const t = Math.min(1, (safeCount - 4) / Math.max(1, COLLAGE_INLINE_CARD_LIMIT - 4));
   return COLLAGE_COLUMN_SPACING - (COLLAGE_COLUMN_SPACING - COLLAGE_MIN_INLINE_SPACING) * t;
 }
@@ -64,7 +66,7 @@ export function getCollageTransform(index, actualCount, slotCount = actualCount)
   const verticalCenterOffset = ((totalRows - 1) * COLLAGE_ROW_SPACING) / 2;
   const y =
     2.34 - verticalCenterOffset - row * COLLAGE_ROW_SPACING + Math.cos((index + 1) * 0.9) * 0.05;
-  const z = 0.9 - row * 0.05 - row * 0.03;
+  const z = 0.9 - row * 0.05 - row * 0.03 + index * COLLAGE_LAYER_Z_STEP;
   const rotationZ = (columnIndex - rowCenter) * (visibleRowCount <= COLLAGE_INLINE_CARD_LIMIT ? 0.035 : 0.06);
 
   return {

@@ -16,6 +16,17 @@ function getDampFactor(speed, delta) {
   return 1 - Math.exp(-speed * delta);
 }
 
+function lerpTransform(fromTransform, toTransform, t) {
+  return {
+    position: fromTransform.position.map((value, index) => (
+      THREE.MathUtils.lerp(value, toTransform.position[index], t)
+    )),
+    rotation: fromTransform.rotation.map((value, index) => (
+      THREE.MathUtils.lerp(value, toTransform.rotation[index], t)
+    ))
+  };
+}
+
 export default function StackDeck({
   cards,
   collageCards = [],
@@ -83,7 +94,12 @@ export default function StackDeck({
   return (
     <group position={[0, -0.15, 0]}>
       {safeCollageCards.map((card, index) => {
-        const transform = getCollageTransform(index, Math.max(1, collageTargetCount));
+        const currentTransform = getCollageTransform(index, Math.max(1, safeCollageCards.length));
+        const targetTransform = getCollageTransform(index, Math.max(1, collageTargetCount));
+        const easedProgress = stackAnimProgress * stackAnimProgress * (3 - 2 * stackAnimProgress);
+        const transform = movingCard
+          ? lerpTransform(currentTransform, targetTransform, easedProgress)
+          : targetTransform;
         return (
           <Card
             key={`collage-${card.card_id}`}
@@ -91,6 +107,7 @@ export default function StackDeck({
             backUrl={card.url_back_preprocessed || card.url_back_original}
             position={transform.position}
             rotation={transform.rotation}
+            renderOrder={index + 1}
             index={index}
             focusedIndex={focusedCollageIndex}
             onHover={setFocusedCollageIndex}
@@ -101,6 +118,7 @@ export default function StackDeck({
             interactive={!isAnimating}
             baseScale={LIST_BASE_SCALE}
             onCardTap={null}
+            transformMode={movingCard ? 'instant' : 'smooth'}
             finishType={card.finish_type || 'normal'}
             sparkleIntensity={sparkleIntensity}
             sparklePalette={card.vfxSparklePalette}
@@ -241,6 +259,7 @@ export default function StackDeck({
             backUrl={movingCard.url_back_preprocessed || movingCard.url_back_original}
             position={position}
             rotation={rotation}
+            renderOrder={collageTargetCount + 2}
             index={-1}
             focusedIndex={null}
             onHover={() => {}}
@@ -251,6 +270,7 @@ export default function StackDeck({
             interactive={false}
             baseScale={movingScale}
             onCardTap={null}
+            transformMode="instant"
             finishType={movingCard.finish_type || 'normal'}
             sparkleIntensity={sparkleIntensity}
             sparklePalette={movingCard.vfxSparklePalette}

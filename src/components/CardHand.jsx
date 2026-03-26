@@ -43,6 +43,10 @@ export default function CardHand({
   }, [clearHoverTimer]);
 
   const scheduleFocusClear = useCallback(() => {
+    if (selectedIndex !== null) {
+      clearHoverTimer();
+      return;
+    }
     clearHoverTimer();
     hoverTimerRef.current = setTimeout(() => {
       if (isInsideFocusedCardRef.current) return;
@@ -51,7 +55,7 @@ export default function CardHand({
       setSelectedIndex(null);
       onCursorChange('default');
     }, FOCUS_CLEAR_DELAY_MS);
-  }, [clearHoverTimer, onCursorChange]);
+  }, [clearHoverTimer, onCursorChange, selectedIndex]);
 
   const getPriceValue = (card, keys) => {
     for (const key of keys) {
@@ -97,6 +101,7 @@ export default function CardHand({
     () => elevatedCards.map((_, index) => getPositionAndRotation(index)),
     [elevatedCards, getPositionAndRotation]
   );
+  const highlightedIndex = selectedIndex ?? hoveredIndex;
 
   const selectionBounds = useMemo(() => {
     const xs = cardTransforms.map((transform) => transform.position[0]);
@@ -142,12 +147,18 @@ export default function CardHand({
 
   const handleSelectionClick = useCallback((event) => {
     event.stopPropagation();
+    if (selectedIndex !== null) {
+      clearHoverTimer();
+      setSelectedIndex(null);
+      onCursorChange('pointer');
+      return;
+    }
     const nextIndex = pendingFocusIndexRef.current ?? findNearestCardIndex(event.point);
     clearHoverTimer();
     setHoveredIndex(nextIndex);
     setSelectedIndex(nextIndex);
     onCursorChange('pointer');
-  }, [clearHoverTimer, findNearestCardIndex, onCursorChange]);
+  }, [clearHoverTimer, findNearestCardIndex, onCursorChange, selectedIndex]);
 
   const handleCardTap = useCallback((index) => {
     clearHoverTimer();
@@ -164,8 +175,10 @@ export default function CardHand({
 
   const handleFocusedCardPointerLeave = useCallback(() => {
     isInsideFocusedCardRef.current = false;
-    scheduleFocusClear();
-  }, [scheduleFocusClear]);
+    if (selectedIndex === null) {
+      scheduleFocusClear();
+    }
+  }, [scheduleFocusClear, selectedIndex]);
 
   if (totalCards === 0) return null;
 
@@ -213,7 +226,10 @@ export default function CardHand({
             sparkleSettings={card.sparkleSettings}
             shimmerSettings={card.shimmerSettings}
             priceLabelSettings={card.priceLabelSettings}
-            showPricePanel={selectedIndex === index || hoveredIndex === index}
+            showPricePanel
+            priceLabelVariant="gallery"
+            priceLabelMuted={highlightedIndex !== null && highlightedIndex !== index}
+            priceLabelEmphasized={highlightedIndex !== null && highlightedIndex === index}
             marketPrice={getPriceValue(card, ['market_price', 'marketPrice', 'price_market'])}
             instantBuyBackPrice={getPriceValue(card, [
               'instant_buy_back_price',

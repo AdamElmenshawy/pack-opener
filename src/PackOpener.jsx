@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, Suspense } from 'rea
 import { useTexture } from '@react-three/drei';
 import Papa from 'papaparse';
 import gsap from 'gsap';
+import { flushSync } from 'react-dom';
 import Experience from './components/Experience';
 
 const DEFAULT_CSV_URL = '/more_cards_for_adam_v2.csv';
@@ -686,10 +687,12 @@ export default function PackOpener({
 
     const topCard = stackCards[0];
     const targetCollageIndex = collageCards.length;
-    setStackAnimating(true);
-    setStackAnimProgress(0);
-    setMovingCard(topCard);
-    setMovingToIndex(targetCollageIndex);
+    flushSync(() => {
+      setStackAnimating(true);
+      setStackAnimProgress(0);
+      setMovingCard(topCard);
+      setMovingToIndex(targetCollageIndex);
+    });
 
     stopStackTween();
     const motion = { t: 0 };
@@ -701,13 +704,15 @@ export default function PackOpener({
         setStackAnimProgress(motion.t);
       },
       onComplete: () => {
-        setStackCards((prev) => prev.slice(1));
-        setCollageCards((prev) => [...prev, topCard]);
-        setStackCycles((prev) => prev + 1);
-        setStackAnimProgress(0);
-        setMovingCard(null);
-        setMovingToIndex(-1);
-        setStackAnimating(false);
+        flushSync(() => {
+          setStackCards((prev) => prev.slice(1));
+          setCollageCards((prev) => [...prev, topCard]);
+          setStackCycles((prev) => prev + 1);
+          setStackAnimProgress(0);
+          setMovingCard(null);
+          setMovingToIndex(-1);
+          setStackAnimating(false);
+        });
         stackTweenRef.current = null;
       }
     });

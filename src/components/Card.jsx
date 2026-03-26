@@ -1,6 +1,6 @@
 // src/components/Card.jsx
 import { memo, useEffect, useMemo, useRef, useState } from 'react';
-import { useFrame } from '@react-three/fiber';
+import { useFrame, useThree } from '@react-three/fiber';
 import { Html, RoundedBox, useTexture } from '@react-three/drei';
 import * as THREE from 'three';
 
@@ -20,9 +20,15 @@ const SCALE_SMOOTHING_OUT = 8;
 const OPACITY_SMOOTHING = 12;
 const FOCUS_INTERACTION_PLANE_SCALE = 1.95;
 const HOVER_PREVIEW_FACTOR = 0.66;
-const DETAIL_ROTATION_X_RANGE = 0.8;
-const DETAIL_ROTATION_Y_RANGE = Math.PI * 0.98;
-const DETAIL_ROTATION_Z_RANGE = 0.16;
+const DETAIL_ROTATION_X_RANGE = 0.52;
+const DETAIL_ROTATION_Y_RANGE = Math.PI * 0.9;
+const DETAIL_ROTATION_Z_RANGE = 0.1;
+const DETAIL_INPUT_WIDTH = 1.15;
+const DETAIL_INPUT_HEIGHT = 1.45;
+const BASE_INPUT_WIDTH = 0.7;
+const BASE_INPUT_HEIGHT = 0.95;
+const REFERENCE_SCREEN_WIDTH = 1440;
+const REFERENCE_SCREEN_HEIGHT = 900;
 const FINISH_TEXTURE_SIZE = 512;
 const ART_REGION = {
   x: 0.108,
@@ -791,11 +797,62 @@ function CardContentFallback({ alphaMap = null, renderOrderBase = 0 }) {
 function PricePanel({
   marketPrice,
   instantBuyBackPrice,
+  variant = 'detail',
+  muted = false,
+  emphasized = false,
   fontSize = DEFAULT_PRICE_LABEL_SETTINGS.fontSize,
   fontColor = DEFAULT_PRICE_LABEL_SETTINGS.fontColor
 }) {
   const marketValue = String(marketPrice ?? '').trim();
   const buyBackValue = String(instantBuyBackPrice ?? '').trim();
+
+  if (variant === 'gallery') {
+    const primaryColor = muted ? 'rgba(150,150,150,0.34)' : '#72ff90';
+    const secondaryColor = muted ? 'rgba(118,118,118,0.26)' : 'rgba(172,255,191,0.9)';
+    const shadowColor = muted ? 'rgba(120,120,120,0.04)' : 'rgba(48,255,107,0.22)';
+    return (
+      <Html
+        center
+        position={[0, -CARD_HEIGHT / 2 - 0.34, 0.04]}
+        style={{ pointerEvents: 'none', zIndex: 30 }}
+      >
+        <div
+          style={{
+            color: primaryColor,
+            fontFamily: 'system-ui',
+            textAlign: 'center',
+            lineHeight: 1.05,
+            textShadow: `0 0 14px ${shadowColor}`,
+            opacity: muted ? 0.28 : 1,
+            transform: emphasized ? 'scale(1.22)' : 'scale(1)',
+            transformOrigin: 'center center'
+          }}
+        >
+          <div
+            style={{
+              fontSize: emphasized ? '23px' : '18px',
+              fontWeight: 800,
+              letterSpacing: '0.01em'
+            }}
+          >
+            {marketValue || buyBackValue || '\u00A0'}
+          </div>
+          {buyBackValue && buyBackValue !== marketValue && (
+            <div
+              style={{
+                fontSize: '10px',
+                color: secondaryColor,
+                marginTop: '3px',
+                whiteSpace: 'nowrap'
+              }}
+            >
+              Buy Back {buyBackValue}
+            </div>
+          )}
+        </div>
+      </Html>
+    );
+  }
 
   return (
     <Html
@@ -859,7 +916,11 @@ function Card({
   interactionMode = 'drag',
   baseScale = 1,
   onCardTap = null,
+  transformMode = 'smooth',
   showPricePanel = false,
+  priceLabelVariant = 'detail',
+  priceLabelMuted = false,
+  priceLabelEmphasized = false,
   marketPrice = '',
   instantBuyBackPrice = '',
   finishType = 'normal',
@@ -882,6 +943,7 @@ function Card({
   ,
   renderOrder = 0
 }) {
+  const { size } = useThree();
   const groupRef = useRef();
   const cardVisualRef = useRef();
   useEffect(() => {
@@ -895,6 +957,7 @@ function Card({
   const diagonalMaterialRef = useRef();
   const sparkleMaterialRef = useRef();
   const hoverTiltRef = useRef({ x: 0, y: 0 });
+  const detailTiltOriginRef = useRef(null);
   const isDraggingRef = useRef(false);
   const isPointerDownRef = useRef(false);
   const hasValidUrls = Boolean(frontUrl) && Boolean(backUrl);
@@ -1046,11 +1109,50 @@ function Card({
   const sparkleEffectFactor = sparkleVfxFactor === null ? 1 : clamp01(sparkleVfxFactor);
   const shimmerActive = shouldRenderFinishEffect && shimmerEnabledOverride;
   const isBoundedInteraction = interactionMode === 'bounded';
+  const useInstantTransform = transformMode === 'instant';
+  const detailInputScale = useMemo(() => {
+    const widthScale = size?.width ? size.width / REFERENCE_SCREEN_WIDTH : 1;
+    const heightScale = size?.height ? size.height / REFERENCE_SCREEN_HEIGHT : 1;
+    return THREE.MathUtils.clamp(Math.max(widthScale, heightScale), 1, 2.4);
+  }, [size?.height, size?.width]);
+  useEffect(() => {
+    if (!isFocused || !isBoundedInteraction) {
+      detailTiltOriginRef.current = null;
+      hoverTiltRef.current.x = 0;
+      hoverTiltRef.current.y = 0;
+      return;
+    }
+
+    detailTiltOriginRef.current = null;
+    hoverTiltRef.current.x = 0;
+    hoverTiltRef.current.y = 0;
+  }, [isFocused, isBoundedInteraction]);
+
   const updateTiltFromWorldPoint = (worldPoint) => {
     if (!groupRef.current) return;
     const localPoint = groupRef.current.worldToLocal(worldPoint.clone());
-    hoverTiltRef.current.x = THREE.MathUtils.clamp(localPoint.x / 0.7, -1, 1);
-    hoverTiltRef.current.y = THREE.MathUtils.clamp(localPoint.y / 0.95, -1, 1);
+    if (isBoundedInteraction) {
+      if (!detailTiltOriginRef.current) {
+        detailTiltOriginRef.current = {
+          x: localPoint.x,
+          y: localPoint.y
+        };
+      }
+      hoverTiltRef.current.x = THREE.MathUtils.clamp(
+        (localPoint.x - detailTiltOriginRef.current.x) / (DETAIL_INPUT_WIDTH * detailInputScale),
+        -1,
+        1
+      );
+      hoverTiltRef.current.y = THREE.MathUtils.clamp(
+        (localPoint.y - detailTiltOriginRef.current.y) / (DETAIL_INPUT_HEIGHT * detailInputScale),
+        -1,
+        1
+      );
+      return;
+    }
+
+    hoverTiltRef.current.x = THREE.MathUtils.clamp(localPoint.x / BASE_INPUT_WIDTH, -1, 1);
+    hoverTiltRef.current.y = THREE.MathUtils.clamp(localPoint.y / BASE_INPUT_HEIGHT, -1, 1);
   };
 
   useFrame((state, delta) => {
@@ -1100,30 +1202,40 @@ function Card({
     }
 
     // Smooth interpolation
-    const positionDamp = getDampFactor(POSITION_SMOOTHING, delta);
-    const rotationDamp = getDampFactor(ROTATION_SMOOTHING, delta);
-    groupRef.current.position.lerp(targetPosition.current, positionDamp);
-    cardVisualRef.current.rotation.x = THREE.MathUtils.lerp(
-      cardVisualRef.current.rotation.x, 
-      targetRotation.current.x, 
-      rotationDamp
-    );
-    cardVisualRef.current.rotation.y = THREE.MathUtils.lerp(
-      cardVisualRef.current.rotation.y, 
-      targetRotation.current.y, 
-      rotationDamp
-    );
-    cardVisualRef.current.rotation.z = THREE.MathUtils.lerp(
-      cardVisualRef.current.rotation.z, 
-      targetRotation.current.z, 
-      rotationDamp
-    );
-    const isZoomingOut = groupRef.current.scale.x > targetScale.current.x;
-    const scaleDamp = getDampFactor(
-      isZoomingOut ? SCALE_SMOOTHING_OUT : SCALE_SMOOTHING_IN,
-      delta
-    );
-    groupRef.current.scale.lerp(targetScale.current, scaleDamp);
+    if (useInstantTransform) {
+      groupRef.current.position.copy(targetPosition.current);
+      cardVisualRef.current.rotation.set(
+        targetRotation.current.x,
+        targetRotation.current.y,
+        targetRotation.current.z
+      );
+      groupRef.current.scale.copy(targetScale.current);
+    } else {
+      const positionDamp = getDampFactor(POSITION_SMOOTHING, delta);
+      const rotationDamp = getDampFactor(ROTATION_SMOOTHING, delta);
+      groupRef.current.position.lerp(targetPosition.current, positionDamp);
+      cardVisualRef.current.rotation.x = THREE.MathUtils.lerp(
+        cardVisualRef.current.rotation.x, 
+        targetRotation.current.x, 
+        rotationDamp
+      );
+      cardVisualRef.current.rotation.y = THREE.MathUtils.lerp(
+        cardVisualRef.current.rotation.y, 
+        targetRotation.current.y, 
+        rotationDamp
+      );
+      cardVisualRef.current.rotation.z = THREE.MathUtils.lerp(
+        cardVisualRef.current.rotation.z, 
+        targetRotation.current.z, 
+        rotationDamp
+      );
+      const isZoomingOut = groupRef.current.scale.x > targetScale.current.x;
+      const scaleDamp = getDampFactor(
+        isZoomingOut ? SCALE_SMOOTHING_OUT : SCALE_SMOOTHING_IN,
+        delta
+      );
+      groupRef.current.scale.lerp(targetScale.current, scaleDamp);
+    }
 
     // Opacity dimming for non-focused cards
     if (frontMaterialRef.current && backMaterialRef.current) {
@@ -1334,8 +1446,6 @@ function Card({
             onCursorChange('pointer');
           }}
           onPointerLeave={() => {
-            hoverTiltRef.current.x = 0;
-            hoverTiltRef.current.y = 0;
             onBoundedPointerLeave();
             onCursorChange('default');
           }}
@@ -1422,6 +1532,9 @@ function Card({
         <PricePanel
           marketPrice={marketPrice}
           instantBuyBackPrice={instantBuyBackPrice}
+          variant={priceLabelVariant}
+          muted={priceLabelMuted}
+          emphasized={priceLabelEmphasized}
           fontSize={resolvedPriceLabelSettings.fontSize}
           fontColor={resolvedPriceLabelSettings.fontColor}
         />
@@ -1446,7 +1559,11 @@ function areCardPropsEqual(prev, next) {
     prev.interactionMode === next.interactionMode &&
     prev.baseScale === next.baseScale &&
     prev.onCardTap === next.onCardTap &&
+    prev.transformMode === next.transformMode &&
     prev.showPricePanel === next.showPricePanel &&
+    prev.priceLabelVariant === next.priceLabelVariant &&
+    prev.priceLabelMuted === next.priceLabelMuted &&
+    prev.priceLabelEmphasized === next.priceLabelEmphasized &&
     prev.marketPrice === next.marketPrice &&
     prev.instantBuyBackPrice === next.instantBuyBackPrice &&
     prev.finishType === next.finishType &&
