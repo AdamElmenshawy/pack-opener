@@ -12,6 +12,8 @@ const CARD_FACE_OFFSET = 0.00102;
 const CARD_FINISH_OFFSET = 0.00124;
 const CARD_DIAGONAL_OFFSET = 0.00142;
 const CARD_SPARKLE_OFFSET = 0.0016;
+const CARD_SPARKLE_PLANE_SCALE_X = 1.26;
+const CARD_SPARKLE_PLANE_SCALE_Y = 1.34;
 const SHELL_OPACITY = 0.12;
 const POSITION_SMOOTHING = 14;
 const ROTATION_SMOOTHING = 14;
@@ -47,6 +49,7 @@ const DEFAULT_FINISH_EFFECT_SETTINGS = Object.freeze({
 const DEFAULT_SPARKLE_INTENSITY = 6;
 
 let sharedAlphaMap = null;
+let sharedSparkleAuraMask = null;
 const sharedFinishTextures = {};
 const SPARKLE_TEXTURE_CACHE = new Map();
 const DIAGONAL_TEXTURE_CACHE = new Map();
@@ -236,6 +239,55 @@ function getRoundedAlphaMap() {
     sharedAlphaMap = makeRoundedAlphaMap(256, 24);
   }
   return sharedAlphaMap;
+}
+
+function makeSparkleAuraMask(size = 256) {
+  const canvas = document.createElement('canvas');
+  canvas.width = size;
+  canvas.height = size;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return null;
+
+  ctx.clearRect(0, 0, size, size);
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(0, 0, size, size);
+
+  const insetX = size * ((CARD_SPARKLE_PLANE_SCALE_X - 1) / (CARD_SPARKLE_PLANE_SCALE_X * 2));
+  const insetY = size * ((CARD_SPARKLE_PLANE_SCALE_Y - 1) / (CARD_SPARKLE_PLANE_SCALE_Y * 2));
+  const innerWidth = size - insetX * 2;
+  const innerHeight = size - insetY * 2;
+  const radius = Math.min(innerWidth, innerHeight) * 0.048;
+
+  ctx.fillStyle = '#000000';
+  ctx.beginPath();
+  ctx.moveTo(insetX + radius, insetY);
+  ctx.lineTo(insetX + innerWidth - radius, insetY);
+  ctx.quadraticCurveTo(insetX + innerWidth, insetY, insetX + innerWidth, insetY + radius);
+  ctx.lineTo(insetX + innerWidth, insetY + innerHeight - radius);
+  ctx.quadraticCurveTo(
+    insetX + innerWidth,
+    insetY + innerHeight,
+    insetX + innerWidth - radius,
+    insetY + innerHeight
+  );
+  ctx.lineTo(insetX + radius, insetY + innerHeight);
+  ctx.quadraticCurveTo(insetX, insetY + innerHeight, insetX, insetY + innerHeight - radius);
+  ctx.lineTo(insetX, insetY + radius);
+  ctx.quadraticCurveTo(insetX, insetY, insetX + radius, insetY);
+  ctx.closePath();
+  ctx.fill();
+
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.NoColorSpace;
+  texture.needsUpdate = true;
+  return texture;
+}
+
+function getSparkleAuraMask() {
+  if (!sharedSparkleAuraMask) {
+    sharedSparkleAuraMask = makeSparkleAuraMask(256);
+  }
+  return sharedSparkleAuraMask;
 }
 
 function pathRoundedRect(ctx, x, y, w, h, r) {
@@ -962,6 +1014,7 @@ function Card({
   const isPointerDownRef = useRef(false);
   const hasValidUrls = Boolean(frontUrl) && Boolean(backUrl);
   const alphaMap = useMemo(() => getRoundedAlphaMap(), []);
+  const sparkleAuraMask = useMemo(() => getSparkleAuraMask(), []);
   const [frontTextureRaw, backTextureRaw] = useTexture([
     frontUrl || TRANSPARENT_PIXEL,
     backUrl || TRANSPARENT_PIXEL
@@ -1509,21 +1562,21 @@ function Card({
           />
         </mesh>
         <mesh position={[0, 0, CARD_SPARKLE_OFFSET]} renderOrder={renderOrder * 10 + 5}>
-          <planeGeometry args={[CARD_WIDTH, CARD_HEIGHT]} />
+          <planeGeometry args={[CARD_WIDTH * CARD_SPARKLE_PLANE_SCALE_X, CARD_HEIGHT * CARD_SPARKLE_PLANE_SCALE_Y]} />
           <meshBasicMaterial
             ref={sparkleMaterialRef}
             map={sparkleTexture || null}
-            alphaMap={alphaMap || null}
+            alphaMap={sparkleAuraMask || null}
             color="#bfefff"
             transparent
-            alphaTest={0.005}
+            alphaTest={0.001}
             depthWrite={false}
             polygonOffset
             polygonOffsetFactor={-1}
             polygonOffsetUnits={-10}
             toneMapped={false}
             side={THREE.FrontSide}
-            blending={THREE.NormalBlending}
+            blending={THREE.AdditiveBlending}
             opacity={0}
           />
         </mesh>

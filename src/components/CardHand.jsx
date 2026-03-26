@@ -1,17 +1,14 @@
 // src/components/CardHand.jsx
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useThree } from '@react-three/fiber';
 import Card from './Card';
+import { HAND_BASE_Z, getHandRowCounts, getHandTransform } from './handLayout';
 
-const BASE_RADIUS = 11;
-const BASE_ARC_SPAN = Math.PI / 3.2;
-const MAX_CARDS_PER_ROW = 8;
-const ROW_SPACER_Y = 0.6;
-const ROW_DEPTH_OFFSET = 0.08;
-const MAX_ARC_SPAN = Math.PI / 1.6;
 const HAND_SELECTION_PADDING_X = 2.2;
 const HAND_SELECTION_PADDING_Y = 2.4;
 const HAND_SELECTION_PLANE_Z = -1.1;
 const FOCUS_CLEAR_DELAY_MS = 140;
+const HOVER_RESUME_DELAY_MS = 220;
 
 export default function CardHand({
   cards,
@@ -20,14 +17,21 @@ export default function CardHand({
 }) {
   const [hoveredIndex, setHoveredIndex] = useState(null);
   const [selectedIndex, setSelectedIndex] = useState(null);
+  const { viewport, camera } = useThree();
 
   const elevatedCards = cards || [];
   const totalCards = elevatedCards.length;
-  const cardsPerRow = Math.min(MAX_CARDS_PER_ROW, Math.max(1, totalCards));
-  const rowCount = Math.max(1, Math.ceil(totalCards / cardsPerRow));
+  const { rowCount } = useMemo(() => getHandRowCounts(totalCards), [totalCards]);
   const hoverTimerRef = useRef(null);
   const pendingFocusIndexRef = useRef(null);
   const isInsideFocusedCardRef = useRef(false);
+  const hoverResumeAtRef = useRef(0);
+  const layoutViewport = useMemo(
+    () => (viewport.getCurrentViewport
+      ? viewport.getCurrentViewport(camera, [0, 0, HAND_BASE_Z])
+      : viewport),
+    [camera, viewport]
+  );
 
   const clearHoverTimer = useCallback(() => {
     if (hoverTimerRef.current) {
@@ -66,40 +70,11 @@ export default function CardHand({
     return '';
   };
 
-  const arcParams = useMemo(() => {
-    const extraCards = Math.max(0, totalCards - (MAX_CARDS_PER_ROW * 2));
-    return {
-      radius: BASE_RADIUS + extraCards * 0.25,
-      arcSpan: Math.min(MAX_ARC_SPAN, BASE_ARC_SPAN + extraCards * 0.04)
-    };
-  }, [totalCards]);
-
-  const getPositionAndRotation = useCallback((index) => {
-    const rowIndex = Math.min(rowCount - 1, Math.floor(index / cardsPerRow));
-    const rowStart = rowIndex * cardsPerRow;
-    const rowTotal = Math.min(totalCards - rowStart, cardsPerRow);
-    const indexInRow = index - rowStart;
-    const denominator = Math.max(rowTotal - 1, 1);
-    const angle = (indexInRow / denominator - 0.5) * arcParams.arcSpan;
-
-    const radius = arcParams.radius;
-    const positionX = Math.sin(angle) * radius;
-    const positionZ = -Math.cos(angle) * radius + radius - 3.5 + rowIndex * ROW_DEPTH_OFFSET;
-    const rowOffsetY = (rowIndex - (rowCount - 1) / 2) * ROW_SPACER_Y;
-    const positionY = rowOffsetY + Math.cos(angle * 2) * 0.5 - 0.3;
-
-    const rotationY = -angle * 0.85;
-
-    return {
-      position: [positionX, positionY, positionZ],
-      rotation: [0, rotationY, 0],
-      renderOrder: rowIndex * cardsPerRow + indexInRow
-    };
-  }, [arcParams.arcSpan, arcParams.radius, cardsPerRow, rowCount, totalCards]);
-
   const cardTransforms = useMemo(
-    () => elevatedCards.map((_, index) => getPositionAndRotation(index)),
-    [elevatedCards, getPositionAndRotation]
+    () => elevatedCards.map((_, index) => (
+      getHandTransform(index, totalCards, layoutViewport.width, layoutViewport.height, selectedIndex)
+    )),
+    [elevatedCards, layoutViewport.height, layoutViewport.width, selectedIndex, totalCards]
   );
   const highlightedIndex = selectedIndex ?? hoveredIndex;
 
@@ -137,6 +112,9 @@ export default function CardHand({
 
   const handleSelectionMove = useCallback((event) => {
     event.stopPropagation();
+    if (Date.now() < hoverResumeAtRef.current) {
+      return;
+    }
     isInsideFocusedCardRef.current = false;
     const nextIndex = findNearestCardIndex(event.point);
     pendingFocusIndexRef.current = nextIndex;
@@ -149,6 +127,9 @@ export default function CardHand({
     event.stopPropagation();
     if (selectedIndex !== null) {
       clearHoverTimer();
+      pendingFocusIndexRef.current = null;
+      hoverResumeAtRef.current = Date.now() + HOVER_RESUME_DELAY_MS;
+      setHoveredIndex(null);
       setSelectedIndex(null);
       onCursorChange('pointer');
       return;

@@ -32,8 +32,9 @@ export default function Experience({
   const isPhaseTransition = status === 'transitioning';
   const rawBlend = isPhaseTransition ? phaseBlend : status === 'revealed' ? 1 : 0;
   const blend = rawBlend * rawBlend * (3 - 2 * rawBlend);
-  const showStack = status === 'stacked' && texturesLoaded;
-  const showTransition = isPhaseTransition && texturesLoaded;
+  const hasVisibleTransitionBlend = blend > 0.0001;
+  const showStack = (status === 'stacked' || (isPhaseTransition && !hasVisibleTransitionBlend)) && texturesLoaded;
+  const showTransition = isPhaseTransition && hasVisibleTransitionBlend && texturesLoaded;
   const showHand = status === 'revealed' && texturesLoaded;
 
   return (

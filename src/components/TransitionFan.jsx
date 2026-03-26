@@ -1,25 +1,11 @@
 import * as THREE from 'three';
+import { useThree } from '@react-three/fiber';
 import Card from './Card';
 import { getCollageTransform } from './collageLayout';
+import { HAND_BASE_Z, getHandTransform } from './handLayout';
 
-const getFanPosition = (index, total) => {
-  const radius = 11;
-  const arcSpan = Math.PI / 3.2;
-  const denominator = Math.max(total - 1, 1);
-  const angle = (index / denominator - 0.5) * arcSpan;
-  return [
-    Math.sin(angle) * radius,
-    Math.cos(angle * 2) * 0.5 - 0.3,
-    -Math.cos(angle) * radius + radius - 3.5
-  ];
-};
-
-const getFanRotation = (index, total) => {
-  const arcSpan = Math.PI / 3.2;
-  const denominator = Math.max(total - 1, 1);
-  const angle = (index / denominator - 0.5) * arcSpan;
-  return [0, -angle * 0.85, 0];
-};
+const COLLAGE_BASE_SCALE = 0.74;
+const COLLAGE_Y_OFFSET = -0.15;
 
 export default function TransitionFan({
   cards,
@@ -27,28 +13,32 @@ export default function TransitionFan({
   blend,
   sparkleIntensity
 }) {
+  const { viewport, camera } = useThree();
   if (!cards || cards.length === 0) return null;
 
   const sourceOrder = sourceCards && sourceCards.length > 0 ? sourceCards : cards;
   const indexById = new Map(sourceOrder.map((card, i) => [card.card_id, i]));
+  const layoutViewport = viewport.getCurrentViewport
+    ? viewport.getCurrentViewport(camera, [0, 0, HAND_BASE_Z])
+    : viewport;
 
   return (
     <group position={[0, 0, 0]}>
       {cards.map((card, index) => {
         const sourceIndex = indexById.get(card.card_id) ?? index;
         const from = getCollageTransform(sourceIndex, sourceOrder.length, sourceOrder.length);
-        const toPos = getFanPosition(index, cards.length);
-        const toRot = getFanRotation(index, cards.length);
+        const to = getHandTransform(index, cards.length, layoutViewport.width, layoutViewport.height, null);
+        const baseScale = THREE.MathUtils.lerp(COLLAGE_BASE_SCALE, 1, blend);
 
         const position = [
-          THREE.MathUtils.lerp(from.position[0], toPos[0], blend),
-          THREE.MathUtils.lerp(from.position[1], toPos[1], blend),
-          THREE.MathUtils.lerp(from.position[2], toPos[2], blend)
+          THREE.MathUtils.lerp(from.position[0], to.position[0], blend),
+          THREE.MathUtils.lerp(from.position[1] + COLLAGE_Y_OFFSET, to.position[1], blend),
+          THREE.MathUtils.lerp(from.position[2], to.position[2], blend)
         ];
         const rotation = [
-          THREE.MathUtils.lerp(from.rotation[0], toRot[0], blend),
-          THREE.MathUtils.lerp(from.rotation[1], toRot[1], blend),
-          THREE.MathUtils.lerp(from.rotation[2], toRot[2], blend)
+          THREE.MathUtils.lerp(from.rotation[0], to.rotation[0], blend),
+          THREE.MathUtils.lerp(from.rotation[1], to.rotation[1], blend),
+          THREE.MathUtils.lerp(from.rotation[2], to.rotation[2], blend)
         ];
 
         return (
@@ -66,7 +56,7 @@ export default function TransitionFan({
             enableFocusLift={false}
             enableDimming={false}
             interactive={false}
-            baseScale={1}
+            baseScale={baseScale}
             onCardTap={null}
             finishType={card.finish_type || 'normal'}
             sparkleIntensity={sparkleIntensity}

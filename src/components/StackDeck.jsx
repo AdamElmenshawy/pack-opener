@@ -7,10 +7,15 @@ import { getCollageTransform } from './collageLayout';
 const STACK_X_STEP = 0.045;
 const STACK_Y_STEP = 0.016;
 const STACK_Z_STEP = 0.045;
-const STACK_DROPPED_Y = -1.7;
+const STACK_DROPPED_Y = -2.05;
 const STACK_BASE_SCALE = 1.32;
-const LIST_BASE_SCALE = 0.74;
+const LIST_BASE_SCALE = 0.68;
 const TILT_SMOOTHING = 14;
+const STACK_ROTATION_X_RANGE = 0.52;
+const STACK_ROTATION_Y_RANGE = Math.PI * 0.9;
+const STACK_ROTATION_Z_RANGE = 0.1;
+const STACK_INPUT_WIDTH = 1.15;
+const STACK_INPUT_HEIGHT = 1.45;
 
 function getDampFactor(speed, delta) {
   return 1 - Math.exp(-speed * delta);
@@ -40,7 +45,7 @@ export default function StackDeck({
 }) {
   const stackGroupRef = useRef();
   const [focusedCollageIndex, setFocusedCollageIndex] = useState(null);
-  const tiltTargetRef = useRef({ x: 0, y: 0 });
+  const tiltTargetRef = useRef({ x: 0, y: 0, z: 0 });
   const dragStateRef = useRef({
     active: false,
     moved: false,
@@ -63,15 +68,17 @@ export default function StackDeck({
   const resetTilt = () => {
     tiltTargetRef.current.x = 0;
     tiltTargetRef.current.y = 0;
+    tiltTargetRef.current.z = 0;
   };
 
   const updateTiltFromWorldPoint = (worldPoint) => {
     if (!stackGroupRef.current) return;
     const localPoint = stackGroupRef.current.worldToLocal(worldPoint.clone());
-    const normalizedX = THREE.MathUtils.clamp(localPoint.x / 1.15, -1, 1);
-    const normalizedY = THREE.MathUtils.clamp(localPoint.y / 1.55, -1, 1);
-    tiltTargetRef.current.x = -normalizedY * 0.38;
-    tiltTargetRef.current.y = normalizedX * 0.58;
+    const normalizedX = THREE.MathUtils.clamp(localPoint.x / STACK_INPUT_WIDTH, -1, 1);
+    const normalizedY = THREE.MathUtils.clamp(localPoint.y / STACK_INPUT_HEIGHT, -1, 1);
+    tiltTargetRef.current.x = -normalizedY * STACK_ROTATION_X_RANGE;
+    tiltTargetRef.current.y = normalizedX * STACK_ROTATION_Y_RANGE;
+    tiltTargetRef.current.z = normalizedX * STACK_ROTATION_Z_RANGE;
   };
 
   useFrame((_, delta) => {
@@ -85,6 +92,11 @@ export default function StackDeck({
     stackGroupRef.current.rotation.y = THREE.MathUtils.lerp(
       stackGroupRef.current.rotation.y,
       tiltTargetRef.current.y,
+      damp
+    );
+    stackGroupRef.current.rotation.z = THREE.MathUtils.lerp(
+      stackGroupRef.current.rotation.z,
+      tiltTargetRef.current.z,
       damp
     );
   });

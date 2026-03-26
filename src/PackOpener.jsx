@@ -58,6 +58,8 @@ const DEFAULT_VFX_PALETTE = ['#bfefff', '#6ea4ff', '#ffeaa4'];
 const DEFAULT_PRICE_LABEL_FONT_SIZE = '11px';
 const DEFAULT_PRICE_LABEL_FONT_COLOR = '#ffffff';
 const IMAGE_PROBE_CACHE = new Map();
+const CARD_PRELOAD_CACHE = new Map();
+const BACKGROUND_PRELOAD_LIMIT = 18;
 const FINISH_PALETTES = {
   normal: DEFAULT_VFX_PALETTE,
   holo: ['#ff8dd9', '#7ae0ff', '#ffe88a'],
@@ -231,49 +233,95 @@ function getPaletteForRarityAndFinish(rarity, finishType) {
   return DEFAULT_VFX_PALETTE;
 }
 
-function probeImageUrl(url) {
+function loadImageUrl(url) {
   if (!url) return Promise.resolve(false);
-  if (IMAGE_PROBE_CACHE.has(url)) {
-    return IMAGE_PROBE_CACHE.get(url);
+
+  if (!IMAGE_PROBE_CACHE.has(url)) {
+    const probePromise = new Promise((resolve) => {
+      if (typeof Image === 'undefined') {
+        resolve(true);
+        return;
+      }
+
+      const img = new Image();
+      img.decoding = 'async';
+      img.crossOrigin = 'anonymous';
+
+      const cleanup = () => {
+        img.onload = null;
+        img.onerror = null;
+      };
+
+      img.onload = () => {
+        cleanup();
+        resolve(true);
+      };
+
+      img.onerror = () => {
+        cleanup();
+        resolve(false);
+      };
+
+      img.src = url;
+    });
+
+    IMAGE_PROBE_CACHE.set(url, probePromise);
   }
-  if (typeof Image === 'undefined') {
-    return Promise.resolve(true);
-  }
 
-  const probePromise = new Promise((resolve) => {
-    const image = new Image();
-
-    const cleanup = () => {
-      image.onload = null;
-      image.onerror = null;
-    };
-
-    image.onload = () => {
-      cleanup();
-      resolve(true);
-    };
-
-    image.onerror = () => {
-      cleanup();
-      resolve(false);
-    };
-
-    image.src = url;
-  });
-
-  IMAGE_PROBE_CACHE.set(url, probePromise);
-  return probePromise;
+  return IMAGE_PROBE_CACHE.get(url);
 }
 
-async function isCardPlayable(card) {
-  if (!card) return false;
+async function preloadCardAssets(card) {
+  if (!card) return null;
   const frontUrl = card.url_front_preprocessed || card.url_front_original;
   const backUrl = card.url_back_preprocessed || card.url_back_original;
-  const [frontOk, backOk] = await Promise.all([
-    probeImageUrl(frontUrl),
-    probeImageUrl(backUrl)
+  if (!frontUrl || !backUrl) return null;
+
+  const [frontIsAvailable, backIsAvailable] = await Promise.all([
+    loadImageUrl(frontUrl),
+    loadImageUrl(backUrl)
   ]);
-  return frontOk && backOk;
+
+  if (!frontIsAvailable || !backIsAvailable) {
+    return null;
+  }
+
+  const cacheKey = `${frontUrl}|${backUrl}`;
+  if (!CARD_PRELOAD_CACHE.has(cacheKey)) {
+    const preloadPromise = Promise.all([
+      useTexture.preload(frontUrl),
+      useTexture.preload(backUrl)
+    ])
+      .then(() => card)
+      .catch((error) => {
+        console.warn('Texture preload failed, removing card from hand:', card.card_id, error);
+        IMAGE_PROBE_CACHE.set(frontUrl, Promise.resolve(false));
+        IMAGE_PROBE_CACHE.set(backUrl, Promise.resolve(false));
+        return null;
+      });
+    CARD_PRELOAD_CACHE.set(cacheKey, preloadPromise);
+  }
+
+  return CARD_PRELOAD_CACHE.get(cacheKey);
+}
+
+function warmCardAssetsInBackground(cards, excludedCardIds = new Set()) {
+  const warmableCards = (cards || [])
+    .filter((card) => card && !excludedCardIds.has(card.card_id))
+    .slice(0, BACKGROUND_PRELOAD_LIMIT);
+
+  if (warmableCards.length === 0) return;
+
+  const runWarmup = () => {
+    void Promise.allSettled(warmableCards.map((card) => preloadCardAssets(card)));
+  };
+
+  if (typeof window !== 'undefined' && typeof window.requestIdleCallback === 'function') {
+    window.requestIdleCallback(runWarmup, { timeout: 500 });
+    return;
+  }
+
+  setTimeout(runWarmup, 120);
 }
 
 export default function PackOpener({
@@ -288,6 +336,7 @@ export default function PackOpener({
   style
 }) {
   const [allCards, setAllCards] = useState([]);
+  const [selectedHandSize, setSelectedHandSize] = useState(() => clampHandSizeValue(handSize));
   const [currentHand, setCurrentHand] = useState([]);
   const [stackCards, setStackCards] = useState([]);
   const [collageCards, setCollageCards] = useState([]);
@@ -302,7 +351,7 @@ export default function PackOpener({
   const [texturesLoaded, setTexturesLoaded] = useState(false);
   const [cursor, setCursor] = useState('default');
   const sparkleIntensity = DEFAULT_SPARKLE_INTENSITY;
-  const resolvedHandSize = useMemo(() => clampHandSizeValue(handSize), [handSize]);
+  const resolvedHandSize = useMemo(() => clampHandSizeValue(selectedHandSize), [selectedHandSize]);
 
   const topRef = useRef();
   const bottomRef = useRef();
@@ -312,6 +361,10 @@ export default function PackOpener({
   const clickTextRef = useRef(null);
   const stackTweenRef = useRef(null);
   const phaseTweenRef = useRef(null);
+
+  useEffect(() => {
+    setSelectedHandSize(clampHandSizeValue(handSize));
+  }, [handSize]);
 
 
   const resolvedImageBase = useMemo(() => {
@@ -515,16 +568,20 @@ export default function PackOpener({
     );
     const selected = [];
     const rejectedCardIds = [];
+    const batchSize = Math.min(24, Math.max(8, targetHandSize * 2));
 
-    for (const card of shuffled) {
-      // Skip cards whose image URLs already prove they will 403 or fail to decode.
-      const playable = await isCardPlayable(card);
-      if (playable) {
-        selected.push(card);
-      } else {
-        rejectedCardIds.push(card.card_id);
-      }
-      if (selected.length >= targetHandSize) break;
+    for (let offset = 0; offset < shuffled.length && selected.length < targetHandSize; offset += batchSize) {
+      const batch = shuffled.slice(offset, offset + batchSize);
+      const batchResults = await Promise.all(batch.map((card) => preloadCardAssets(card)));
+      batchResults.forEach((readyCard, resultIndex) => {
+        if (readyCard) {
+          if (selected.length < targetHandSize) {
+            selected.push(readyCard);
+          }
+        } else {
+          rejectedCardIds.push(batch[resultIndex]?.card_id);
+        }
+      });
     }
 
     if (selected.length === 0) {
@@ -536,61 +593,29 @@ export default function PackOpener({
     }
 
     if (rejectedCardIds.length > 0) {
-      console.warn('Skipping cards with unavailable images:', rejectedCardIds);
+      console.warn('Skipping cards with unavailable images:', rejectedCardIds.filter(Boolean));
     }
 
-    const preloadPairs = (cardList) =>
-      cardList.map(async (card) => {
-        const frontUrl = card.url_front_preprocessed || card.url_front_original;
-        const backUrl = card.url_back_preprocessed || card.url_back_original;
-        try {
-          await Promise.all([
-            useTexture.preload(frontUrl),
-            useTexture.preload(backUrl)
-          ]);
-          return card;
-        } catch (error) {
-          console.warn('Texture preload failed, removing card from hand:', card.card_id, error);
-          IMAGE_PROBE_CACHE.set(frontUrl, Promise.resolve(false));
-          IMAGE_PROBE_CACHE.set(backUrl, Promise.resolve(false));
-          return null;
-        }
-      });
-
-    try {
-      const preloadedCards = await Promise.all(preloadPairs(selected));
-      const readySelected = preloadedCards.filter(Boolean);
-
-      if (readySelected.length === 0) {
-        console.error('All selected cards failed texture preload.');
-        setStatus('error');
-        setIsPackVisible(false);
-        setTexturesLoaded(false);
-        return;
-      }
-
-      setCurrentHand(readySelected);
-      setStackCards(readySelected);
-      setCollageCards([]);
-      setStackCycles(0);
-      setStackAnimating(false);
-      setStackAnimProgress(0);
-      setPhaseBlend(0);
-      setMovingCard(null);
-      setMovingToIndex(-1);
-      stopStackTween();
-      stopPhaseTween();
-    } catch (error) {
-      console.error('Texture preload warning:', error);
-      setStatus('error');
-      setIsPackVisible(false);
-      setTexturesLoaded(false);
-      return;
-    }
+    setCurrentHand(selected);
+    setStackCards(selected);
+    setCollageCards([]);
+    setStackCycles(0);
+    setStackAnimating(false);
+    setStackAnimProgress(0);
+    setPhaseBlend(0);
+    setMovingCard(null);
+    setMovingToIndex(-1);
+    stopStackTween();
+    stopPhaseTween();
 
     setTexturesLoaded(true);
     setIsPackVisible(true);
     setStatus('pack');
+
+    warmCardAssetsInBackground(
+      shuffled,
+      new Set(selected.map((card) => card.card_id))
+    );
   }, [resolvedHandSize, setCursorSafe, stopPhaseTween, stopStackTween]);
 
   useEffect(() => {
@@ -809,6 +834,68 @@ export default function PackOpener({
           sparkleIntensity={sparkleIntensity}
         />
       </Suspense>
+
+      {allCards.length > 0 && (
+        <div
+          style={{
+            position: 'absolute',
+            top: '20px',
+            left: '20px',
+            zIndex: 20,
+            minWidth: '220px',
+            padding: '12px 14px',
+            borderRadius: '14px',
+            border: '1px solid rgba(255,255,255,0.14)',
+            background: 'rgba(0,0,0,0.48)',
+            color: '#fff',
+            backdropFilter: 'blur(10px)'
+          }}
+        >
+          <div
+            style={{
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+              marginBottom: '8px',
+              gap: '12px'
+            }}
+          >
+            <span
+              style={{
+                fontSize: '0.8rem',
+                fontWeight: 700,
+                letterSpacing: '0.08em',
+                textTransform: 'uppercase',
+                opacity: 0.85
+              }}
+            >
+              Cards In Pack
+            </span>
+            <span
+              style={{
+                fontSize: '1rem',
+                fontWeight: 800
+              }}
+            >
+              {resolvedHandSize}
+            </span>
+          </div>
+          <input
+            type="range"
+            min="1"
+            max="20"
+            step="1"
+            value={resolvedHandSize}
+            onChange={(event) => {
+              setSelectedHandSize(clampHandSizeValue(event.target.value));
+            }}
+            style={{
+              width: '100%',
+              cursor: 'pointer'
+            }}
+          />
+        </div>
+      )}
 
       {status === 'pack' && (
         <h1
