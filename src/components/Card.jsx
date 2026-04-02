@@ -13,10 +13,21 @@ const CARD_FINISH_OFFSET = 0.00124;
 const CARD_DIAGONAL_OFFSET = 0.00142;
 const CARD_SPARKLE_OFFSET = 0.0016;
 const CARD_HALO_OFFSET = -0.0022;
+const CARD_HALO_SPARKLE_OFFSET = -0.00205;
 const CARD_SPARKLE_PLANE_SCALE_X = 1.26;
 const CARD_SPARKLE_PLANE_SCALE_Y = 1.34;
-const CARD_HALO_PLANE_SCALE_X = 1.36;
-const CARD_HALO_PLANE_SCALE_Y = 1.54;
+const CARD_HALO_FRAME_PADDING = 0.065;
+const CARD_HALO_GLOW_PADDING = 0.135;
+const CARD_HALO_FRAME_RADIUS = 0.115;
+const CARD_HALO_GLOW_RADIUS = 0.15;
+const CARD_HALO_SPARKLE_PADDING_X = 0.48;
+const CARD_HALO_SPARKLE_PADDING_Y = 0.62;
+const CARD_HALO_SPARKLE_WIDTH = CARD_WIDTH + CARD_HALO_SPARKLE_PADDING_X;
+const CARD_HALO_SPARKLE_HEIGHT = CARD_HEIGHT + CARD_HALO_SPARKLE_PADDING_Y;
+const CARD_HALO_SPARKLE_INSET_X =
+  (CARD_HALO_SPARKLE_WIDTH - CARD_WIDTH) / (CARD_HALO_SPARKLE_WIDTH * 2);
+const CARD_HALO_SPARKLE_INSET_Y =
+  (CARD_HALO_SPARKLE_HEIGHT - CARD_HEIGHT) / (CARD_HALO_SPARKLE_HEIGHT * 2);
 const SHELL_OPACITY = 0.12;
 const POSITION_SMOOTHING = 14;
 const ROTATION_SMOOTHING = 14;
@@ -53,7 +64,6 @@ const DEFAULT_SPARKLE_INTENSITY = 6;
 
 let sharedAlphaMap = null;
 let sharedSparkleAuraMask = null;
-let sharedHaloTexture = null;
 const sharedFinishTextures = {};
 const DIAGONAL_TEXTURE_CACHE = new Map();
 const DEFAULT_SPARKLE_PALETTE = ['#bfefff', '#6ea4ff', '#ffeaa4'];
@@ -67,45 +77,45 @@ const RARITY_TINTS = {
 const RARITY_HALO_STYLES = {
   chase: {
     color: '#ffb324',
-    opacity: 1.04,
-    scaleX: 1.14,
-    scaleY: 1.16,
+    opacity: 1.08,
+    scaleX: 1,
+    scaleY: 1,
     pulseSpeed: 2.4,
     pulseAmount: 0.24,
     glintFloor: 0.48
   },
   legendary: {
     color: '#ff8cc8',
-    opacity: 0.94,
-    scaleX: 1.12,
-    scaleY: 1.14,
+    opacity: 0.98,
+    scaleX: 1,
+    scaleY: 1,
     pulseSpeed: 2.2,
     pulseAmount: 0.2,
     glintFloor: 0.44
   },
   epic: {
     color: '#9a8cff',
-    opacity: 0.84,
-    scaleX: 1.09,
-    scaleY: 1.11,
+    opacity: 0.9,
+    scaleX: 1,
+    scaleY: 1,
     pulseSpeed: 2,
     pulseAmount: 0.18,
     glintFloor: 0.4
   },
   rare: {
     color: '#66ddff',
-    opacity: 0.76,
-    scaleX: 1.07,
-    scaleY: 1.09,
+    opacity: 0.84,
+    scaleX: 1,
+    scaleY: 1,
     pulseSpeed: 1.8,
     pulseAmount: 0.16,
     glintFloor: 0.36
   },
   common: {
     color: '#a9d8ff',
-    opacity: 0.62,
-    scaleX: 1.05,
-    scaleY: 1.08,
+    opacity: 0.76,
+    scaleX: 1,
+    scaleY: 1,
     pulseSpeed: 1.6,
     pulseAmount: 0.13,
     glintFloor: 0.32
@@ -302,11 +312,11 @@ function makeSparkleAuraMask(size = 256) {
   ctx.fillStyle = '#ffffff';
   ctx.fillRect(0, 0, size, size);
 
-  const insetX = size * ((CARD_SPARKLE_PLANE_SCALE_X - 1) / (CARD_SPARKLE_PLANE_SCALE_X * 2));
-  const insetY = size * ((CARD_SPARKLE_PLANE_SCALE_Y - 1) / (CARD_SPARKLE_PLANE_SCALE_Y * 2));
+  const insetX = size * CARD_HALO_SPARKLE_INSET_X;
+  const insetY = size * CARD_HALO_SPARKLE_INSET_Y;
   const innerWidth = size - insetX * 2;
   const innerHeight = size - insetY * 2;
-  const radius = Math.min(innerWidth, innerHeight) * 0.048;
+  const radius = Math.min(innerWidth, innerHeight) * 0.052;
 
   ctx.fillStyle = '#000000';
   ctx.beginPath();
@@ -338,96 +348,6 @@ function getSparkleAuraMask() {
     sharedSparkleAuraMask = makeSparkleAuraMask(256);
   }
   return sharedSparkleAuraMask;
-}
-
-function makeHaloTexture(size = 768) {
-  const canvas = document.createElement('canvas');
-  canvas.width = size;
-  canvas.height = size;
-  const ctx = canvas.getContext('2d');
-  if (!ctx) return null;
-
-  const center = size / 2;
-  const haloWidth = size * 0.34;
-  const haloHeight = size * 0.48;
-  const haloX = center - haloWidth / 2;
-  const haloY = center - haloHeight / 2;
-  const haloRadius = size * 0.06;
-
-  ctx.clearRect(0, 0, size, size);
-
-  const aura = ctx.createRadialGradient(center, center, size * 0.1, center, center, size * 0.5);
-  aura.addColorStop(0, 'rgba(255,255,255,0.2)');
-  aura.addColorStop(0.38, 'rgba(255,255,255,0.16)');
-  aura.addColorStop(0.72, 'rgba(255,255,255,0.08)');
-  aura.addColorStop(1, 'rgba(255,255,255,0)');
-  ctx.fillStyle = aura;
-  ctx.fillRect(0, 0, size, size);
-
-  const rayCount = 18;
-  for (let index = 0; index < rayCount; index += 1) {
-    const angle = (Math.PI * 2 * index) / rayCount + (index % 2 === 0 ? 0.04 : -0.04);
-    const inner = size * (0.21 + (index % 3) * 0.012);
-    const outer = size * (0.43 + (index % 4) * 0.014);
-    const width = size * (0.018 + (index % 2) * 0.008);
-    const ray = ctx.createLinearGradient(inner, 0, outer, 0);
-    ray.addColorStop(0, 'rgba(255,255,255,0)');
-    ray.addColorStop(0.38, 'rgba(255,255,255,0.22)');
-    ray.addColorStop(0.72, 'rgba(255,255,255,0.08)');
-    ray.addColorStop(1, 'rgba(255,255,255,0)');
-
-    ctx.save();
-    ctx.translate(center, center);
-    ctx.rotate(angle);
-    ctx.fillStyle = ray;
-    ctx.beginPath();
-    ctx.moveTo(inner, 0);
-    ctx.lineTo(inner + width * 0.8, -width * 0.75);
-    ctx.lineTo(outer, 0);
-    ctx.lineTo(inner + width * 0.8, width * 0.75);
-    ctx.closePath();
-    ctx.fill();
-    ctx.restore();
-  }
-
-  ctx.save();
-  ctx.shadowColor = 'rgba(255,255,255,0.95)';
-  ctx.shadowBlur = size * 0.045;
-  ctx.strokeStyle = 'rgba(255,255,255,0.88)';
-  ctx.lineWidth = size * 0.018;
-  pathRoundedRect(ctx, haloX, haloY, haloWidth, haloHeight, haloRadius);
-  ctx.stroke();
-  ctx.restore();
-
-  ctx.save();
-  ctx.strokeStyle = 'rgba(255,255,255,0.52)';
-  ctx.lineWidth = size * 0.034;
-  pathRoundedRect(ctx, haloX, haloY, haloWidth, haloHeight, haloRadius);
-  ctx.stroke();
-  ctx.restore();
-
-  const innerGlow = ctx.createRadialGradient(center, center, size * 0.16, center, center, size * 0.42);
-  innerGlow.addColorStop(0, 'rgba(255,255,255,0.16)');
-  innerGlow.addColorStop(0.55, 'rgba(255,255,255,0.08)');
-  innerGlow.addColorStop(1, 'rgba(255,255,255,0)');
-  ctx.fillStyle = innerGlow;
-  ctx.fillRect(0, 0, size, size);
-
-  const texture = new THREE.CanvasTexture(canvas);
-  texture.colorSpace = THREE.NoColorSpace;
-  texture.wrapS = THREE.ClampToEdgeWrapping;
-  texture.wrapT = THREE.ClampToEdgeWrapping;
-  texture.minFilter = THREE.LinearMipmapLinearFilter;
-  texture.magFilter = THREE.LinearFilter;
-  texture.needsUpdate = true;
-  return texture;
-}
-
-function getHaloTexture() {
-  if (!sharedHaloTexture) {
-    sharedHaloTexture = makeHaloTexture(768);
-  }
-  return sharedHaloTexture;
 }
 
 function pathRoundedRect(ctx, x, y, w, h, r) {
@@ -674,26 +594,6 @@ function drawTwinkleStar(ctx, x, y, outerRadius, innerRadius, rotation = 0) {
   ctx.closePath();
 }
 
-function drawShineFlare(ctx, x, y, length, width, rotation, color, alpha) {
-  ctx.save();
-  ctx.translate(x, y);
-  ctx.rotate(rotation);
-  const flare = ctx.createLinearGradient(-length, 0, length, 0);
-  flare.addColorStop(0, colorToRgba(color, 0));
-  flare.addColorStop(0.5, colorToRgba(color, alpha));
-  flare.addColorStop(1, colorToRgba(color, 0));
-  ctx.fillStyle = flare;
-  ctx.beginPath();
-  ctx.moveTo(-length, 0);
-  ctx.quadraticCurveTo(-length * 0.25, -width, 0, 0);
-  ctx.quadraticCurveTo(length * 0.25, width, length, 0);
-  ctx.quadraticCurveTo(length * 0.25, -width, 0, 0);
-  ctx.quadraticCurveTo(-length * 0.25, width, -length, 0);
-  ctx.closePath();
-  ctx.fill();
-  ctx.restore();
-}
-
 function paintDiagonalLineTexture(
   ctx,
   size,
@@ -763,29 +663,6 @@ function drawGlowOrb(ctx, x, y, radius, color, alpha) {
 }
 
 function drawCrossGlint(ctx, x, y, radius, rotation, color, alpha) {
-  const flareLength = radius * 3.8;
-  drawShineFlare(ctx, x, y, flareLength, radius * 0.95, rotation, '#ffffff', alpha * 0.72);
-  drawShineFlare(
-    ctx,
-    x,
-    y,
-    flareLength * 0.92,
-    radius * 0.82,
-    rotation + Math.PI / 2,
-    color,
-    alpha * 0.58
-  );
-  drawShineFlare(
-    ctx,
-    x,
-    y,
-    flareLength * 0.72,
-    radius * 0.52,
-    rotation + Math.PI / 4,
-    '#ffffff',
-    alpha * 0.3
-  );
-
   ctx.fillStyle = colorToRgba(color, alpha * 0.65);
   drawTwinkleStar(ctx, x, y, radius * 1.5, radius * 0.38, rotation);
   ctx.fill();
@@ -813,25 +690,82 @@ function createSparkleParticleField({
     palette && palette.length > 0 ? palette : DEFAULT_SPARKLE_PALETTE;
   const normalizedQuantity = clamp01(quantityFactor);
   const normalizedSize = clamp01(sizeFactor);
-  const count = Math.max(28, Math.round(38 + normalizedQuantity * 104));
+  const count = Math.max(34, Math.round(46 + normalizedQuantity * 118));
   const random = createSeededRandom(
     hashString(
       `${seedKey}|${normalizedPalette.join('|')}|q${normalizedQuantity.toFixed(3)}|s${normalizedSize.toFixed(3)}`
     )
   );
+  const innerLeft = CARD_HALO_SPARKLE_INSET_X;
+  const innerRight = 1 - CARD_HALO_SPARKLE_INSET_X;
+  const innerTop = CARD_HALO_SPARKLE_INSET_Y;
+  const innerBottom = 1 - CARD_HALO_SPARKLE_INSET_Y;
 
   const particles = Array.from({ length: count }, (_, index) => {
-    const anchorX = 0.5 + (random() - random()) * (0.14 + normalizedQuantity * 0.24);
-    const anchorY = random();
-    const edgeBias = Math.abs(anchorX - 0.5) / 0.5;
-    const alpha = 0.54 + (1 - edgeBias) * 0.56 + random() * 0.2;
+    const sideRoll = random();
+    const edgeProgress = random();
+    const edgeJitter = (random() - 0.5) * 0.04;
+    const normalJitter = (random() - 0.5) * 0.02;
+    let originX = 0.5;
+    let originY = 0.5;
+    let normalX = 0;
+    let normalY = 0;
+    let tangentX = 0;
+    let tangentY = 0;
+
+    if (sideRoll < 0.3) {
+      originX = THREE.MathUtils.lerp(innerLeft, innerRight, edgeProgress);
+      originY = innerTop + normalJitter;
+      normalY = -1;
+      tangentX = edgeProgress < 0.18 ? -0.85 : edgeProgress > 0.82 ? 0.85 : edgeJitter * 1.6;
+    } else if (sideRoll < 0.52) {
+      originX = innerRight + normalJitter;
+      originY = THREE.MathUtils.lerp(innerTop, innerBottom, edgeProgress);
+      normalX = 1;
+      tangentY = edgeProgress < 0.22 ? -0.65 : edgeProgress > 0.78 ? 0.38 : edgeJitter * 1.2;
+    } else if (sideRoll < 0.74) {
+      originX = innerLeft + normalJitter;
+      originY = THREE.MathUtils.lerp(innerTop, innerBottom, edgeProgress);
+      normalX = -1;
+      tangentY = edgeProgress < 0.22 ? -0.65 : edgeProgress > 0.78 ? 0.38 : edgeJitter * 1.2;
+    } else {
+      originX = THREE.MathUtils.lerp(innerLeft, innerRight, edgeProgress);
+      originY = innerBottom + normalJitter;
+      normalY = 1;
+      tangentX = edgeProgress < 0.15 ? -0.5 : edgeProgress > 0.85 ? 0.5 : edgeJitter;
+    }
+
+    const travelDistance = 0.035 + random() * 0.075;
+    const tangentDistance = (random() - 0.5) * 0.05;
+    const liftDistance = 0.008 + random() * 0.04;
+    const anchorX = THREE.MathUtils.clamp(
+      originX + normalX * travelDistance + tangentX * tangentDistance,
+      0.01,
+      0.99
+    );
+    const anchorY = THREE.MathUtils.clamp(
+      originY + normalY * travelDistance + tangentY * tangentDistance - liftDistance,
+      -0.06,
+      1.02
+    );
+    const centerBias = 1 - Math.min(1, Math.abs(originX - 0.5) / 0.5);
+    const verticalBias = 1 - Math.min(1, Math.abs(originY - 0.54) / 0.54);
+    const alpha = 0.48 + centerBias * 0.34 + verticalBias * 0.18 + random() * 0.18;
+    const warmAccent =
+      random() < 0.56
+        ? random() < 0.5
+          ? '#ffd06e'
+          : '#fff4d0'
+        : null;
     return {
       kind: random() > 0.38 ? 'orb' : 'flare',
-      color: normalizedPalette[index % normalizedPalette.length] || '#ffffff',
+      color: warmAccent || normalizedPalette[index % normalizedPalette.length] || '#ffffff',
       anchorX,
       anchorY,
+      spawnX: originX,
+      spawnY: originY,
       speed: 0.08 + random() * (0.05 + normalizedQuantity * 0.09),
-      wobbleAmp: (0.008 + random() * 0.022) * (0.8 + normalizedSize * 0.9),
+      wobbleAmp: (0.008 + random() * 0.024) * (0.82 + normalizedSize * 0.9),
       wobbleFreq: 1.4 + random() * 2.2,
       wobblePhase: random() * Math.PI * 2,
       twinkleSpeed: 6.2 + random() * 6.4,
@@ -840,7 +774,12 @@ function createSparkleParticleField({
       rotation: random() * Math.PI * 2,
       alpha,
       travelOffset: random(),
-      drift: (random() - 0.5) * 0.018
+      lifeWindow: 0.22 + random() * 0.62,
+      fadeInWindow: 0.04 + random() * 0.08,
+      fadeOutStart: 0.16 + random() * 0.24,
+      fadeOutPower: 2.2 + random() * 2.4,
+      visibleTravel: 0.42 + random() * 0.22,
+      drift: (random() - 0.5) * 0.012
     };
   });
 
@@ -866,31 +805,59 @@ function paintPremiumGlintFrame(field, elapsedTime, motionScale = 1) {
   ctx.clearRect(0, 0, size, size);
 
   particles.forEach((particle) => {
-    const travel = wrapUnit(
-      particle.anchorY + particle.travelOffset - elapsedTime * particle.speed * motionScale
+    const cycle = wrapUnit(
+      particle.travelOffset + elapsedTime * particle.speed * motionScale
     );
-    const xNorm =
-      particle.anchorX +
+    if (cycle > particle.lifeWindow) return;
+
+    const travel = cycle / particle.lifeWindow;
+    const easedTravel = 1 - Math.pow(1 - travel, 1.6);
+    const motionTravel = easedTravel * particle.visibleTravel;
+    const baseX = THREE.MathUtils.lerp(particle.spawnX, particle.anchorX, motionTravel);
+    const baseY = THREE.MathUtils.lerp(particle.spawnY, particle.anchorY, motionTravel);
+    const xNorm = THREE.MathUtils.clamp(
+      baseX +
       Math.sin(elapsedTime * particle.wobbleFreq + particle.wobblePhase) *
         particle.wobbleAmp *
         motionScale +
-      particle.drift * (travel - 0.5);
-    const yNorm = 1.08 - travel * 1.18;
+      particle.drift * (motionTravel - 0.5),
+      0.01,
+      0.99
+    );
+    const yNorm = THREE.MathUtils.clamp(baseY, 0.01, 0.99);
     const x = xNorm * size;
     const y = yNorm * size;
+    const inInnerCardBounds =
+      xNorm > CARD_HALO_SPARKLE_INSET_X &&
+      xNorm < 1 - CARD_HALO_SPARKLE_INSET_X &&
+      yNorm > CARD_HALO_SPARKLE_INSET_Y &&
+      yNorm < 1 - CARD_HALO_SPARKLE_INSET_Y;
+    if (inInnerCardBounds) return;
 
-    const distanceFromCenter = Math.min(
-      1,
-      Math.hypot((xNorm - 0.5) / 0.48, (yNorm - 0.54) / 0.68)
+    const fadeInProgress = THREE.MathUtils.clamp(
+      travel / Math.max(0.0001, particle.fadeInWindow),
+      0,
+      1
     );
-    const edgeFade = Math.pow(1 - distanceFromCenter, 2.05);
-    const wrapFade = Math.pow(Math.sin(Math.PI * travel), 0.7);
-    if (edgeFade <= 0.002 || wrapFade <= 0.002) return;
+    const fadeOutProgress = THREE.MathUtils.clamp(
+      (travel - particle.fadeOutStart) / Math.max(0.0001, 1 - particle.fadeOutStart),
+      0,
+      1
+    );
+    const lifeFade =
+      fadeInProgress *
+      Math.pow(1 - fadeOutProgress, particle.fadeOutPower);
+    if (lifeFade <= 0.002) return;
 
     const twinkleWave = (Math.sin(elapsedTime * particle.twinkleSpeed + particle.twinklePhase) + 1) * 0.5;
     const twinkle = 0.55 + Math.pow(twinkleWave, 3.1) * 1.55;
     const radius = particle.baseRadius * twinkle;
-    const alpha = Math.min(1, particle.alpha * edgeFade * wrapFade * (0.58 + twinkleWave * 0.98));
+    const alpha = Math.min(
+      1,
+      particle.alpha *
+        lifeFade *
+        (0.72 + twinkleWave * 1.08)
+    );
 
     if (particle.kind === 'flare') {
       drawGlowOrb(ctx, x, y, radius * 0.85, particle.color, alpha * 0.42);
@@ -1196,7 +1163,8 @@ function Card({
   }, [renderOrder]);
   const frontMaterialRef = useRef();
   const backMaterialRef = useRef();
-  const haloMaterialRef = useRef();
+  const haloGlowMaterialRef = useRef();
+  const haloFrameMaterialRef = useRef();
   const finishMaterialRef = useRef();
   const diagonalMaterialRef = useRef();
   const sparkleMaterialRef = useRef();
@@ -1206,7 +1174,6 @@ function Card({
   const isPointerDownRef = useRef(false);
   const hasValidUrls = Boolean(frontUrl) && Boolean(backUrl);
   const alphaMap = useMemo(() => getRoundedAlphaMap(), []);
-  const haloTexture = useMemo(() => getHaloTexture(), []);
   const sparkleAuraMask = useMemo(() => getSparkleAuraMask(), []);
   const [frontTextureRaw, backTextureRaw] = useTexture([
     frontUrl || TRANSPARENT_PIXEL,
@@ -1482,20 +1449,27 @@ function Card({
       }
     }
 
-    if (haloMaterialRef.current) {
-      const haloEmphasis = isFocused ? 1 : isHovered ? 0.9 : 0.7;
-      const dimScale = isDimmed ? 0.4 : 1;
-      const pulse =
-        1 +
-        Math.sin(elapsedTime * haloStyle.pulseSpeed + index * 0.45) *
-          haloStyle.pulseAmount;
-      const targetHaloOpacity = haloStyle.opacity * haloEmphasis * dimScale;
-      haloMaterialRef.current.opacity = THREE.MathUtils.lerp(
-        haloMaterialRef.current.opacity ?? 0,
-        targetHaloOpacity,
+    const haloFocusBoost = isBoundedInteraction ? 1.18 : 1;
+    const haloTargetOpacity = isFocused
+      ? Math.max(0.88, haloStyle.opacity * 0.92 * haloFocusBoost)
+      : isHovered
+        ? Math.max(0.44, haloStyle.opacity * 0.56)
+        : 0;
+    if (haloGlowMaterialRef.current) {
+      haloGlowMaterialRef.current.opacity = THREE.MathUtils.lerp(
+        haloGlowMaterialRef.current.opacity ?? 0,
+        haloTargetOpacity * 0.2,
         getDampFactor(OPACITY_SMOOTHING, delta)
       );
-      haloMaterialRef.current.color.copy(haloColor).multiplyScalar(pulse);
+      haloGlowMaterialRef.current.color.copy(haloColor);
+    }
+    if (haloFrameMaterialRef.current) {
+      haloFrameMaterialRef.current.opacity = THREE.MathUtils.lerp(
+        haloFrameMaterialRef.current.opacity ?? 0,
+        haloTargetOpacity,
+        getDampFactor(OPACITY_SMOOTHING, delta)
+      );
+      haloFrameMaterialRef.current.color.copy(haloColor);
     }
 
     if (finishMaterialRef.current) {
@@ -1525,40 +1499,29 @@ function Card({
     }
 
     if (diagonalMaterialRef.current) {
-      const linesActive = shimmerActive && normalizedCoverage > 0;
-      const targetLineOpacity = linesActive
-        ? (0.12 + normalizedCoverage * 0.42) * shimmerOpacitySetting
-        : 0;
-      diagonalMaterialRef.current.opacity = THREE.MathUtils.lerp(
-        diagonalMaterialRef.current.opacity ?? 0,
-        targetLineOpacity,
-        getDampFactor(OPACITY_SMOOTHING, delta)
-      );
-
-      const lineMap = diagonalMaterialRef.current.map;
-      if (lineMap) {
-        const lineClock =
-          elapsedTime * THREE.MathUtils.lerp(0.08, 0.22, shimmerSpeedSetting);
-        const lineFall = lineClock % 1;
-        lineMap.offset.x = 0;
-        lineMap.offset.y = lineFall;
-        lineMap.rotation = -0.12;
-        lineMap.repeat.set(1 + shimmerSizeSetting * 0.45, 1 + shimmerSizeSetting * 0.45);
-        lineMap.needsUpdate = true;
-      }
+      diagonalMaterialRef.current.opacity = 0;
     }
 
     if (sparkleMaterialRef.current) {
-      const sparklesActive = sparkleEnabled && isFocused;
+      const sparklesActive = sparkleEnabled && (isFocused || isHovered);
       const rawVisibility = sparklesActive
-        ? sparkleVisibility * sparkleEffectFactor
+        ? sparkleVisibility *
+          sparkleEffectFactor *
+          (isFocused ? 1 : 0.72)
         : 0;
       const adjustedVisibility =
         rawVisibility * sparkleOpacitySetting * (1.25 + shimmerIntensitySetting * 0.2);
-      const focusBoost = isFocused ? 0.24 * sparkleOpacitySetting : 0;
+      const focusBoost = isFocused
+        ? 0.24 * sparkleOpacitySetting
+        : isHovered
+          ? 0.1 * sparkleOpacitySetting
+          : 0;
       const rarityGlintFloor = haloStyle.glintFloor * sparkleOpacitySetting;
       const targetSparkleOpacity = sparklesActive
-        ? Math.max(adjustedVisibility, rarityGlintFloor) + focusBoost
+        ? Math.max(
+            adjustedVisibility,
+            rarityGlintFloor * (isFocused ? 1 : 0.68)
+          ) + focusBoost
         : 0;
       sparkleMaterialRef.current.opacity = THREE.MathUtils.lerp(
         sparkleMaterialRef.current.opacity ?? 0,
@@ -1570,7 +1533,10 @@ function Card({
       if (sparkleMap) {
         const speedScale = THREE.MathUtils.lerp(0.75, 1.55, sparkleSpeedSetting);
         const effectiveMotionScale = sparklesActive
-          ? Math.max(0.35, sparkleMotionScale * speedScale)
+          ? Math.max(
+              0.35,
+              sparkleMotionScale * speedScale * (isFocused ? 1 : 0.84)
+            )
           : sparkleMotionScale;
         if (sparklesActive || (sparkleMaterialRef.current.opacity ?? 0) > 0.01) {
           paintPremiumGlintFrame(sparkleField, elapsedTime, effectiveMotionScale);
@@ -1683,26 +1649,50 @@ function Card({
         </mesh>
       )}
       <group ref={cardVisualRef} rotation={rotation}>
-        <mesh position={[0, 0, CARD_HALO_OFFSET]} renderOrder={renderOrder * 10}>
-          <planeGeometry
-            args={[
-              CARD_WIDTH * CARD_HALO_PLANE_SCALE_X * haloStyle.scaleX,
-              CARD_HEIGHT * CARD_HALO_PLANE_SCALE_Y * haloStyle.scaleY
-            ]}
-          />
+        <RoundedBox
+          args={[
+            CARD_WIDTH + CARD_HALO_GLOW_PADDING,
+            CARD_HEIGHT + CARD_HALO_GLOW_PADDING,
+            CARD_DEPTH
+          ]}
+          radius={CARD_HALO_GLOW_RADIUS}
+          smoothness={6}
+          position={[0, 0, CARD_HALO_OFFSET - 0.00024]}
+          renderOrder={renderOrder * 10}
+        >
           <meshBasicMaterial
-            ref={haloMaterialRef}
-            map={haloTexture || null}
+            ref={haloGlowMaterialRef}
             color={haloColor}
             transparent
-            alphaTest={0.001}
             depthWrite={false}
             toneMapped={false}
-            side={THREE.DoubleSide}
+            side={THREE.FrontSide}
             blending={THREE.AdditiveBlending}
             opacity={0}
           />
-        </mesh>
+        </RoundedBox>
+        <RoundedBox
+          args={[
+            CARD_WIDTH + CARD_HALO_FRAME_PADDING,
+            CARD_HEIGHT + CARD_HALO_FRAME_PADDING,
+            CARD_DEPTH
+          ]}
+          radius={CARD_HALO_FRAME_RADIUS}
+          smoothness={6}
+          position={[0, 0, CARD_HALO_OFFSET]}
+          renderOrder={renderOrder * 10 + 1}
+        >
+          <meshBasicMaterial
+            ref={haloFrameMaterialRef}
+            color={haloColor}
+            transparent
+            depthWrite={false}
+            toneMapped={false}
+            side={THREE.FrontSide}
+            blending={THREE.NormalBlending}
+            opacity={0}
+          />
+        </RoundedBox>
         {!hasValidUrls ? (
           <CardContentFallback renderOrderBase={renderOrder * 10} />
         ) : frontTexture && backTexture ? (
@@ -1735,27 +1725,8 @@ function Card({
             opacity={0}
           />
         </mesh>
-        <mesh position={[0, 0, CARD_DIAGONAL_OFFSET]} renderOrder={renderOrder * 10 + 4}>
-          <planeGeometry args={[CARD_WIDTH, CARD_HEIGHT]} />
-          <meshBasicMaterial
-            ref={diagonalMaterialRef}
-            map={diagonalTexture || null}
-            alphaMap={alphaMap || null}
-            color="#ffffff"
-            transparent
-            alphaTest={0.005}
-            depthWrite={false}
-            polygonOffset
-            polygonOffsetFactor={-1}
-            polygonOffsetUnits={-8}
-            toneMapped={false}
-            side={THREE.FrontSide}
-            blending={THREE.NormalBlending}
-            opacity={0}
-          />
-        </mesh>
-        <mesh position={[0, 0, CARD_SPARKLE_OFFSET]} renderOrder={renderOrder * 10 + 5}>
-          <planeGeometry args={[CARD_WIDTH * CARD_SPARKLE_PLANE_SCALE_X, CARD_HEIGHT * CARD_SPARKLE_PLANE_SCALE_Y]} />
+        <mesh position={[0, 0, CARD_HALO_SPARKLE_OFFSET]} renderOrder={renderOrder * 10 + 2}>
+          <planeGeometry args={[CARD_HALO_SPARKLE_WIDTH, CARD_HALO_SPARKLE_HEIGHT]} />
           <meshBasicMaterial
             ref={sparkleMaterialRef}
             map={sparkleField?.texture || null}
@@ -1764,9 +1735,6 @@ function Card({
             transparent
             alphaTest={0.001}
             depthWrite={false}
-            polygonOffset
-            polygonOffsetFactor={-1}
-            polygonOffsetUnits={-10}
             toneMapped={false}
             side={THREE.FrontSide}
             blending={THREE.AdditiveBlending}

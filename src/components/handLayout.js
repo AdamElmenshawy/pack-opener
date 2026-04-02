@@ -64,7 +64,7 @@ export function getHandTransform(index, totalCards, layoutWidth, layoutHeight, s
 
   if (isSelected) {
     return {
-      position: [0, 0, HAND_BASE_Z + 0.3],
+      position: [positionX, positionY, HAND_BASE_Z + 0.3],
       rotation: [0, 0, 0],
       renderOrder: 999
     };
