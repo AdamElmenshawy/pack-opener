@@ -12,8 +12,11 @@ const CARD_FACE_OFFSET = 0.00102;
 const CARD_FINISH_OFFSET = 0.00124;
 const CARD_DIAGONAL_OFFSET = 0.00142;
 const CARD_SPARKLE_OFFSET = 0.0016;
+const CARD_HALO_OFFSET = -0.0022;
 const CARD_SPARKLE_PLANE_SCALE_X = 1.26;
 const CARD_SPARKLE_PLANE_SCALE_Y = 1.34;
+const CARD_HALO_PLANE_SCALE_X = 1.36;
+const CARD_HALO_PLANE_SCALE_Y = 1.54;
 const SHELL_OPACITY = 0.12;
 const POSITION_SMOOTHING = 14;
 const ROTATION_SMOOTHING = 14;
@@ -50,8 +53,8 @@ const DEFAULT_SPARKLE_INTENSITY = 6;
 
 let sharedAlphaMap = null;
 let sharedSparkleAuraMask = null;
+let sharedHaloTexture = null;
 const sharedFinishTextures = {};
-const SPARKLE_TEXTURE_CACHE = new Map();
 const DIAGONAL_TEXTURE_CACHE = new Map();
 const DEFAULT_SPARKLE_PALETTE = ['#bfefff', '#6ea4ff', '#ffeaa4'];
 const RARITY_TINTS = {
@@ -60,6 +63,53 @@ const RARITY_TINTS = {
   epic: '#c9b7ff',
   rare: '#9ef6ff',
   common: '#bfefff'
+};
+const RARITY_HALO_STYLES = {
+  chase: {
+    color: '#ffb324',
+    opacity: 1.04,
+    scaleX: 1.14,
+    scaleY: 1.16,
+    pulseSpeed: 2.4,
+    pulseAmount: 0.24,
+    glintFloor: 0.48
+  },
+  legendary: {
+    color: '#ff8cc8',
+    opacity: 0.94,
+    scaleX: 1.12,
+    scaleY: 1.14,
+    pulseSpeed: 2.2,
+    pulseAmount: 0.2,
+    glintFloor: 0.44
+  },
+  epic: {
+    color: '#9a8cff',
+    opacity: 0.84,
+    scaleX: 1.09,
+    scaleY: 1.11,
+    pulseSpeed: 2,
+    pulseAmount: 0.18,
+    glintFloor: 0.4
+  },
+  rare: {
+    color: '#66ddff',
+    opacity: 0.76,
+    scaleX: 1.07,
+    scaleY: 1.09,
+    pulseSpeed: 1.8,
+    pulseAmount: 0.16,
+    glintFloor: 0.36
+  },
+  common: {
+    color: '#a9d8ff',
+    opacity: 0.62,
+    scaleX: 1.05,
+    scaleY: 1.08,
+    pulseSpeed: 1.6,
+    pulseAmount: 0.13,
+    glintFloor: 0.32
+  }
 };
 
 const DEFAULT_SPARKLE_SETTINGS = {
@@ -290,6 +340,96 @@ function getSparkleAuraMask() {
   return sharedSparkleAuraMask;
 }
 
+function makeHaloTexture(size = 768) {
+  const canvas = document.createElement('canvas');
+  canvas.width = size;
+  canvas.height = size;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return null;
+
+  const center = size / 2;
+  const haloWidth = size * 0.34;
+  const haloHeight = size * 0.48;
+  const haloX = center - haloWidth / 2;
+  const haloY = center - haloHeight / 2;
+  const haloRadius = size * 0.06;
+
+  ctx.clearRect(0, 0, size, size);
+
+  const aura = ctx.createRadialGradient(center, center, size * 0.1, center, center, size * 0.5);
+  aura.addColorStop(0, 'rgba(255,255,255,0.2)');
+  aura.addColorStop(0.38, 'rgba(255,255,255,0.16)');
+  aura.addColorStop(0.72, 'rgba(255,255,255,0.08)');
+  aura.addColorStop(1, 'rgba(255,255,255,0)');
+  ctx.fillStyle = aura;
+  ctx.fillRect(0, 0, size, size);
+
+  const rayCount = 18;
+  for (let index = 0; index < rayCount; index += 1) {
+    const angle = (Math.PI * 2 * index) / rayCount + (index % 2 === 0 ? 0.04 : -0.04);
+    const inner = size * (0.21 + (index % 3) * 0.012);
+    const outer = size * (0.43 + (index % 4) * 0.014);
+    const width = size * (0.018 + (index % 2) * 0.008);
+    const ray = ctx.createLinearGradient(inner, 0, outer, 0);
+    ray.addColorStop(0, 'rgba(255,255,255,0)');
+    ray.addColorStop(0.38, 'rgba(255,255,255,0.22)');
+    ray.addColorStop(0.72, 'rgba(255,255,255,0.08)');
+    ray.addColorStop(1, 'rgba(255,255,255,0)');
+
+    ctx.save();
+    ctx.translate(center, center);
+    ctx.rotate(angle);
+    ctx.fillStyle = ray;
+    ctx.beginPath();
+    ctx.moveTo(inner, 0);
+    ctx.lineTo(inner + width * 0.8, -width * 0.75);
+    ctx.lineTo(outer, 0);
+    ctx.lineTo(inner + width * 0.8, width * 0.75);
+    ctx.closePath();
+    ctx.fill();
+    ctx.restore();
+  }
+
+  ctx.save();
+  ctx.shadowColor = 'rgba(255,255,255,0.95)';
+  ctx.shadowBlur = size * 0.045;
+  ctx.strokeStyle = 'rgba(255,255,255,0.88)';
+  ctx.lineWidth = size * 0.018;
+  pathRoundedRect(ctx, haloX, haloY, haloWidth, haloHeight, haloRadius);
+  ctx.stroke();
+  ctx.restore();
+
+  ctx.save();
+  ctx.strokeStyle = 'rgba(255,255,255,0.52)';
+  ctx.lineWidth = size * 0.034;
+  pathRoundedRect(ctx, haloX, haloY, haloWidth, haloHeight, haloRadius);
+  ctx.stroke();
+  ctx.restore();
+
+  const innerGlow = ctx.createRadialGradient(center, center, size * 0.16, center, center, size * 0.42);
+  innerGlow.addColorStop(0, 'rgba(255,255,255,0.16)');
+  innerGlow.addColorStop(0.55, 'rgba(255,255,255,0.08)');
+  innerGlow.addColorStop(1, 'rgba(255,255,255,0)');
+  ctx.fillStyle = innerGlow;
+  ctx.fillRect(0, 0, size, size);
+
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.NoColorSpace;
+  texture.wrapS = THREE.ClampToEdgeWrapping;
+  texture.wrapT = THREE.ClampToEdgeWrapping;
+  texture.minFilter = THREE.LinearMipmapLinearFilter;
+  texture.magFilter = THREE.LinearFilter;
+  texture.needsUpdate = true;
+  return texture;
+}
+
+function getHaloTexture() {
+  if (!sharedHaloTexture) {
+    sharedHaloTexture = makeHaloTexture(768);
+  }
+  return sharedHaloTexture;
+}
+
 function pathRoundedRect(ctx, x, y, w, h, r) {
   const radius = Math.max(0, Math.min(r, Math.min(w, h) / 2));
   ctx.beginPath();
@@ -469,21 +609,12 @@ function normalizeSparkleIntensity(value) {
   return THREE.MathUtils.clamp(Math.round(numeric), 1, 10);
 }
 
-function getSparkleOpacityScale(intensity) {
-  return THREE.MathUtils.lerp(0.3, 1.0, (normalizeSparkleIntensity(intensity) - 1) / 9);
-}
-
 function getSparkleMotionScale(intensity) {
   return THREE.MathUtils.lerp(0.7, 1.5, (normalizeSparkleIntensity(intensity) - 1) / 9);
 }
 
 function getSparkleVisibility(intensity) {
   return THREE.MathUtils.lerp(0.16, 0.72, (normalizeSparkleIntensity(intensity) - 1) / 9);
-}
-
-function getSparkleRepeat(intensity) {
-  const normalized = normalizeSparkleIntensity(intensity);
-  return THREE.MathUtils.lerp(1.05, 1.35, (normalized - 1) / 9);
 }
 
 function clamp01(value) {
@@ -503,6 +634,27 @@ function colorToRgba(value, alpha) {
   const g = Math.round(color.g * 255);
   const b = Math.round(color.b * 255);
   return `rgba(${r},${g},${b},${safeAlpha})`;
+}
+
+function hashString(value = '') {
+  let hash = 2166136261;
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= value.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return hash >>> 0;
+}
+
+function createSeededRandom(seed = 1) {
+  let state = seed >>> 0 || 1;
+  return () => {
+    state = (Math.imul(state, 1664525) + 1013904223) >>> 0;
+    return state / 4294967296;
+  };
+}
+
+function wrapUnit(value) {
+  return ((value % 1) + 1) % 1;
 }
 
 function drawTwinkleStar(ctx, x, y, outerRadius, innerRadius, rotation = 0) {
@@ -593,90 +745,62 @@ function paintDiagonalLineTexture(
   });
 }
 
-function paintSparkleTexture(
-  ctx,
-  size,
-  palette,
-  quantityFactor = 0.65,
-  sizeFactor = 0.5
-) {
-  ctx.clearRect(0, 0, size, size);
-  const normalizedSize = clamp01(sizeFactor);
-  const normalizedQuantity = clamp01(quantityFactor);
-  const densityScale = 0.7 + normalizedQuantity * 1.8;
-  const normalizedPalette =
-    palette && palette.length > 0 ? palette : DEFAULT_SPARKLE_PALETTE;
-  const highlightColor = normalizedPalette[2] || normalizedPalette[1] || normalizedPalette[0] || '#ffffff';
+function drawGlowOrb(ctx, x, y, radius, color, alpha) {
+  const glow = ctx.createRadialGradient(x, y, 0, x, y, radius * 3.2);
+  glow.addColorStop(0, colorToRgba('#ffffff', alpha * 0.95));
+  glow.addColorStop(0.14, colorToRgba(color, alpha * 0.82));
+  glow.addColorStop(0.45, colorToRgba(color, alpha * 0.32));
+  glow.addColorStop(1, colorToRgba(color, 0));
+  ctx.fillStyle = glow;
+  ctx.beginPath();
+  ctx.arc(x, y, radius * 3.2, 0, Math.PI * 2);
+  ctx.fill();
 
-  const sparkleCount = Math.max(
-    10,
-    Math.round((18 + normalizedQuantity * 44) * densityScale)
-  );
-  for (let index = 0; index < sparkleCount; index += 1) {
-    const color = normalizedPalette[index % normalizedPalette.length] || highlightColor;
-    const px = ((index * 73) % 1000) / 1000;
-    const py = ((index * 197 + 131) % 1000) / 1000;
-    const twinkle = 0.5 + (((index * 53) % 100) / 100) * 0.5;
-    const x = px * size;
-    const y = py * size;
-    const radius = size * (0.004 + normalizedSize * 0.012 + (index % 3) * 0.0025);
-    const glowRadius = radius * (2.4 + twinkle);
-    const starRotation = ((index * 37) % 360) * (Math.PI / 180);
-
-    const glow = ctx.createRadialGradient(x, y, 0, x, y, glowRadius);
-    glow.addColorStop(0, colorToRgba(color, 0.95 * twinkle));
-    glow.addColorStop(0.25, colorToRgba(color, 0.45 * twinkle));
-    glow.addColorStop(1, colorToRgba(color, 0));
-    ctx.fillStyle = glow;
-    ctx.beginPath();
-    ctx.arc(x, y, glowRadius, 0, Math.PI * 2);
-    ctx.fill();
-
-    ctx.fillStyle = colorToRgba(color, 0.82 * twinkle);
-    drawTwinkleStar(ctx, x, y, radius * 2.1, radius * 0.55, starRotation);
-    ctx.fill();
-
-    ctx.fillStyle = colorToRgba('#ffffff', 0.96 * twinkle);
-    drawTwinkleStar(ctx, x, y, radius * 1.15, radius * 0.28, starRotation + Math.PI / 4);
-    ctx.fill();
-
-    drawShineFlare(
-      ctx,
-      x,
-      y,
-      glowRadius * 0.95,
-      radius * 0.95,
-      starRotation + Math.PI / 8,
-      '#ffffff',
-      0.42 * twinkle
-    );
-    drawShineFlare(
-      ctx,
-      x,
-      y,
-      glowRadius * 0.7,
-      radius * 0.55,
-      starRotation + Math.PI / 2.8,
-      color,
-      0.35 * twinkle
-    );
-
-    ctx.strokeStyle = colorToRgba(color, 0.42 * twinkle);
-    ctx.lineWidth = Math.max(0.8, radius * 0.22);
-    ctx.beginPath();
-    ctx.moveTo(x - glowRadius * 0.8, y);
-    ctx.lineTo(x + glowRadius * 0.8, y);
-    ctx.moveTo(x, y - glowRadius * 0.95);
-    ctx.lineTo(x, y + glowRadius * 0.95);
-    ctx.stroke();
-  }
+  ctx.fillStyle = colorToRgba('#ffffff', alpha);
+  ctx.beginPath();
+  ctx.arc(x, y, radius * 0.72, 0, Math.PI * 2);
+  ctx.fill();
 }
 
-function makeSparkleTexture({
+function drawCrossGlint(ctx, x, y, radius, rotation, color, alpha) {
+  const flareLength = radius * 3.8;
+  drawShineFlare(ctx, x, y, flareLength, radius * 0.95, rotation, '#ffffff', alpha * 0.72);
+  drawShineFlare(
+    ctx,
+    x,
+    y,
+    flareLength * 0.92,
+    radius * 0.82,
+    rotation + Math.PI / 2,
+    color,
+    alpha * 0.58
+  );
+  drawShineFlare(
+    ctx,
+    x,
+    y,
+    flareLength * 0.72,
+    radius * 0.52,
+    rotation + Math.PI / 4,
+    '#ffffff',
+    alpha * 0.3
+  );
+
+  ctx.fillStyle = colorToRgba(color, alpha * 0.65);
+  drawTwinkleStar(ctx, x, y, radius * 1.5, radius * 0.38, rotation);
+  ctx.fill();
+
+  ctx.fillStyle = colorToRgba('#ffffff', alpha * 0.94);
+  drawTwinkleStar(ctx, x, y, radius * 0.92, radius * 0.22, rotation + Math.PI / 4);
+  ctx.fill();
+}
+
+function createSparkleParticleField({
   size = 512,
   palette = DEFAULT_SPARKLE_PALETTE,
   quantityFactor = DEFAULT_SPARKLE_SETTINGS.quantity,
-  sizeFactor = DEFAULT_SPARKLE_SETTINGS.size
+  sizeFactor = DEFAULT_SPARKLE_SETTINGS.size,
+  seedKey = ''
 }) {
   if (typeof document === 'undefined') return null;
   const canvas = document.createElement('canvas');
@@ -685,39 +809,106 @@ function makeSparkleTexture({
   const ctx = canvas.getContext('2d');
   if (!ctx) return null;
 
-  paintSparkleTexture(ctx, size, palette, quantityFactor, sizeFactor);
+  const normalizedPalette =
+    palette && palette.length > 0 ? palette : DEFAULT_SPARKLE_PALETTE;
+  const normalizedQuantity = clamp01(quantityFactor);
+  const normalizedSize = clamp01(sizeFactor);
+  const count = Math.max(28, Math.round(38 + normalizedQuantity * 104));
+  const random = createSeededRandom(
+    hashString(
+      `${seedKey}|${normalizedPalette.join('|')}|q${normalizedQuantity.toFixed(3)}|s${normalizedSize.toFixed(3)}`
+    )
+  );
+
+  const particles = Array.from({ length: count }, (_, index) => {
+    const anchorX = 0.5 + (random() - random()) * (0.14 + normalizedQuantity * 0.24);
+    const anchorY = random();
+    const edgeBias = Math.abs(anchorX - 0.5) / 0.5;
+    const alpha = 0.54 + (1 - edgeBias) * 0.56 + random() * 0.2;
+    return {
+      kind: random() > 0.38 ? 'orb' : 'flare',
+      color: normalizedPalette[index % normalizedPalette.length] || '#ffffff',
+      anchorX,
+      anchorY,
+      speed: 0.08 + random() * (0.05 + normalizedQuantity * 0.09),
+      wobbleAmp: (0.008 + random() * 0.022) * (0.8 + normalizedSize * 0.9),
+      wobbleFreq: 1.4 + random() * 2.2,
+      wobblePhase: random() * Math.PI * 2,
+      twinkleSpeed: 6.2 + random() * 6.4,
+      twinklePhase: random() * Math.PI * 2,
+      baseRadius: size * (0.0038 + normalizedSize * 0.01 + random() * 0.0065),
+      rotation: random() * Math.PI * 2,
+      alpha,
+      travelOffset: random(),
+      drift: (random() - 0.5) * 0.018
+    };
+  });
+
   const texture = new THREE.CanvasTexture(canvas);
   texture.colorSpace = THREE.NoColorSpace;
-  texture.wrapS = THREE.RepeatWrapping;
-  texture.wrapT = THREE.RepeatWrapping;
+  texture.wrapS = THREE.ClampToEdgeWrapping;
+  texture.wrapT = THREE.ClampToEdgeWrapping;
   texture.minFilter = THREE.LinearMipmapLinearFilter;
   texture.magFilter = THREE.LinearFilter;
   texture.needsUpdate = true;
-  return texture;
+
+  return {
+    ctx,
+    size,
+    texture,
+    particles
+  };
 }
 
-function getSparkleTextureForOptions({
-  palette,
-  quantityFactor = DEFAULT_SPARKLE_SETTINGS.quantity,
-  sizeFactor = DEFAULT_SPARKLE_SETTINGS.size
-}) {
-  const normalizedPalette =
-    palette && palette.length > 0 ? palette : DEFAULT_SPARKLE_PALETTE;
-  const key = `${normalizedPalette.join('|')}|q${clamp01(quantityFactor).toFixed(
-    3
-  )}|s${clamp01(sizeFactor).toFixed(3)}`;
-  if (SPARKLE_TEXTURE_CACHE.has(key)) {
-    return SPARKLE_TEXTURE_CACHE.get(key);
-  }
-  const texture = makeSparkleTexture({
-    palette: normalizedPalette,
-    quantityFactor: clamp01(quantityFactor),
-    sizeFactor: clamp01(sizeFactor)
+function paintPremiumGlintFrame(field, elapsedTime, motionScale = 1) {
+  if (!field?.ctx) return;
+  const { ctx, size, particles } = field;
+  ctx.clearRect(0, 0, size, size);
+
+  particles.forEach((particle) => {
+    const travel = wrapUnit(
+      particle.anchorY + particle.travelOffset - elapsedTime * particle.speed * motionScale
+    );
+    const xNorm =
+      particle.anchorX +
+      Math.sin(elapsedTime * particle.wobbleFreq + particle.wobblePhase) *
+        particle.wobbleAmp *
+        motionScale +
+      particle.drift * (travel - 0.5);
+    const yNorm = 1.08 - travel * 1.18;
+    const x = xNorm * size;
+    const y = yNorm * size;
+
+    const distanceFromCenter = Math.min(
+      1,
+      Math.hypot((xNorm - 0.5) / 0.48, (yNorm - 0.54) / 0.68)
+    );
+    const edgeFade = Math.pow(1 - distanceFromCenter, 2.05);
+    const wrapFade = Math.pow(Math.sin(Math.PI * travel), 0.7);
+    if (edgeFade <= 0.002 || wrapFade <= 0.002) return;
+
+    const twinkleWave = (Math.sin(elapsedTime * particle.twinkleSpeed + particle.twinklePhase) + 1) * 0.5;
+    const twinkle = 0.55 + Math.pow(twinkleWave, 3.1) * 1.55;
+    const radius = particle.baseRadius * twinkle;
+    const alpha = Math.min(1, particle.alpha * edgeFade * wrapFade * (0.58 + twinkleWave * 0.98));
+
+    if (particle.kind === 'flare') {
+      drawGlowOrb(ctx, x, y, radius * 0.85, particle.color, alpha * 0.42);
+      drawCrossGlint(
+        ctx,
+        x,
+        y,
+        radius,
+        particle.rotation + Math.sin(elapsedTime * 0.8 + particle.twinklePhase) * 0.08,
+        particle.color,
+        alpha
+      );
+    } else {
+      drawGlowOrb(ctx, x, y, radius, particle.color, alpha);
+    }
   });
-  if (texture) {
-    SPARKLE_TEXTURE_CACHE.set(key, texture);
-  }
-  return texture;
+
+  field.texture.needsUpdate = true;
 }
 
 function makeDiagonalTexture({
@@ -981,7 +1172,7 @@ function Card({
   sparklePalette = DEFAULT_SPARKLE_PALETTE,
   sparklePaletteKey = DEFAULT_SPARKLE_PALETTE.join('|'),
   diagonalPalette = DEFAULT_SPARKLE_PALETTE,
-  diagonalPaletteKey = DEFAULT_SPARKLE_PALETTE.join('|'),
+  diagonalPaletteKey: _diagonalPaletteKey = DEFAULT_SPARKLE_PALETTE.join('|'),
   hasExplicitPalette = false,
   sparkleVfxFactor = null,
   diagonalCoverage = 1,
@@ -1005,6 +1196,7 @@ function Card({
   }, [renderOrder]);
   const frontMaterialRef = useRef();
   const backMaterialRef = useRef();
+  const haloMaterialRef = useRef();
   const finishMaterialRef = useRef();
   const diagonalMaterialRef = useRef();
   const sparkleMaterialRef = useRef();
@@ -1014,6 +1206,7 @@ function Card({
   const isPointerDownRef = useRef(false);
   const hasValidUrls = Boolean(frontUrl) && Boolean(backUrl);
   const alphaMap = useMemo(() => getRoundedAlphaMap(), []);
+  const haloTexture = useMemo(() => getHaloTexture(), []);
   const sparkleAuraMask = useMemo(() => getSparkleAuraMask(), []);
   const [frontTextureRaw, backTextureRaw] = useTexture([
     frontUrl || TRANSPARENT_PIXEL,
@@ -1061,14 +1254,13 @@ function Card({
     ...DEFAULT_PRICE_LABEL_SETTINGS,
     ...priceLabelSettings
   };
+  void _diagonalPaletteKey;
   const basePalette =
     sparklePalette && sparklePalette.length > 0 ? sparklePalette : DEFAULT_SPARKLE_PALETTE;
   const fallbackPaletteKey =
     sparklePaletteKey || basePalette.join('|') || DEFAULT_SPARKLE_PALETTE.join('|');
   const diagonalBasePalette =
     diagonalPalette && diagonalPalette.length > 0 ? diagonalPalette : basePalette;
-  const diagonalFallbackPaletteKey =
-    diagonalPaletteKey || diagonalBasePalette.join('|') || fallbackPaletteKey;
   const derivedPalette = useDerivedPaletteFromImage(
     frontUrl,
     basePalette,
@@ -1080,52 +1272,34 @@ function Card({
       : derivedPalette && derivedPalette.length > 0
         ? derivedPalette
         : basePalette;
-  const effectivePaletteKey =
-    hasExplicitPalette
-      ? fallbackPaletteKey
-      : derivedPalette && derivedPalette.length > 0
-        ? derivedPalette.join('|')
-        : fallbackPaletteKey;
   const effectiveDiagonalPalette = hasExplicitPalette ? diagonalBasePalette : effectivePalette;
-  const effectiveDiagonalPaletteKey = hasExplicitPalette
-    ? diagonalFallbackPaletteKey
-    : effectivePaletteKey;
-  const paletteBaseColor = useMemo(() => {
-    const baseColor = new THREE.Color(effectivePalette[0] || DEFAULT_SPARKLE_PALETTE[0]);
-    const rarityTint = new THREE.Color(RARITY_TINTS[rarity] || DEFAULT_SPARKLE_PALETTE[0]);
-    return baseColor.lerp(rarityTint, 0.25);
-  }, [effectivePaletteKey, rarity]);
-  const sparkleOptionsKey = [
-    effectivePaletteKey,
-    `q${sparkleQuantitySetting.toFixed(3)}`,
-    `s${sparkleSizeSetting.toFixed(3)}`
-  ].join('|');
-  const diagonalOptionsKey = [
-    effectiveDiagonalPaletteKey,
-    `c${normalizedCoverage.toFixed(3)}`,
-    `s${shimmerSizeSetting.toFixed(3)}`
-  ].join('|');
-  const sparkleTexture = useMemo(() => {
-    const baseTexture = getSparkleTextureForOptions({
+  const paletteBaseColor = new THREE.Color(effectivePalette[0] || DEFAULT_SPARKLE_PALETTE[0]).lerp(
+    new THREE.Color(RARITY_TINTS[rarity] || DEFAULT_SPARKLE_PALETTE[0]),
+    0.25
+  );
+  const haloStyle = RARITY_HALO_STYLES[rarity] || RARITY_HALO_STYLES.common;
+  const haloColor = new THREE.Color(haloStyle.color).lerp(
+    new THREE.Color(effectivePalette[1] || effectivePalette[0] || haloStyle.color),
+    0.2
+  );
+  const sparkleField = (() => {
+    const field = createSparkleParticleField({
       palette: effectivePalette,
       quantityFactor: sparkleQuantitySetting,
-      sizeFactor: sparkleSizeSetting
+      sizeFactor: sparkleSizeSetting,
+      seedKey: `${frontUrl || ''}|${rarity}`
     });
-    if (!baseTexture) return null;
-    const texture = baseTexture.clone();
-    texture.wrapS = THREE.RepeatWrapping;
-    texture.wrapT = THREE.RepeatWrapping;
-    texture.center.set(0.5, 0.5);
-    texture.rotation = 0;
-    texture.needsUpdate = true;
-    return texture;
-  }, [sparkleOptionsKey]);
+    if (field) {
+      paintPremiumGlintFrame(field, 0, 1);
+    }
+    return field;
+  })();
   useEffect(() => {
     return () => {
-      sparkleTexture?.dispose?.();
+      sparkleField?.texture?.dispose?.();
     };
-  }, [sparkleTexture]);
-  const diagonalTexture = useMemo(() => {
+  }, [sparkleField]);
+  const diagonalTexture = (() => {
     const baseTexture = getDiagonalTextureForOptions({
       palette: effectiveDiagonalPalette,
       diagonalCoverage: normalizedCoverage,
@@ -1139,7 +1313,7 @@ function Card({
     texture.rotation = 0;
     texture.needsUpdate = true;
     return texture;
-  }, [diagonalOptionsKey]);
+  })();
   useEffect(() => {
     return () => {
       diagonalTexture?.dispose?.();
@@ -1155,10 +1329,8 @@ function Card({
   const isDimmed = enableDimming && focusedIndex !== null && focusedIndex !== index;
   const shouldRenderFinishEffect = isFinishEffectEnabled(finishType, finishEffectSettings);
   const cardSparkleIntensity = sparkleIntensity * THREE.MathUtils.lerp(0.85, 1.4, sparkleIntensitySetting);
-  const sparkleOpacityScale = getSparkleOpacityScale(cardSparkleIntensity);
   const sparkleMotionScale = getSparkleMotionScale(cardSparkleIntensity);
   const sparkleVisibility = getSparkleVisibility(cardSparkleIntensity);
-  const sparkleRepeat = getSparkleRepeat(cardSparkleIntensity);
   const sparkleEffectFactor = sparkleVfxFactor === null ? 1 : clamp01(sparkleVfxFactor);
   const shimmerActive = shouldRenderFinishEffect && shimmerEnabledOverride;
   const isBoundedInteraction = interactionMode === 'bounded';
@@ -1210,6 +1382,7 @@ function Card({
 
   useFrame((state, delta) => {
     if (!groupRef.current || !cardVisualRef.current) return;
+    const elapsedTime = state.clock.getElapsedTime();
 
     // Update targets based on focus state
     if (isFocused) {
@@ -1309,6 +1482,22 @@ function Card({
       }
     }
 
+    if (haloMaterialRef.current) {
+      const haloEmphasis = isFocused ? 1 : isHovered ? 0.9 : 0.7;
+      const dimScale = isDimmed ? 0.4 : 1;
+      const pulse =
+        1 +
+        Math.sin(elapsedTime * haloStyle.pulseSpeed + index * 0.45) *
+          haloStyle.pulseAmount;
+      const targetHaloOpacity = haloStyle.opacity * haloEmphasis * dimScale;
+      haloMaterialRef.current.opacity = THREE.MathUtils.lerp(
+        haloMaterialRef.current.opacity ?? 0,
+        targetHaloOpacity,
+        getDampFactor(OPACITY_SMOOTHING, delta)
+      );
+      haloMaterialRef.current.color.copy(haloColor).multiplyScalar(pulse);
+    }
+
     if (finishMaterialRef.current) {
       const shimmerBoost = shimmerActive
         ? 1 + shimmerIntensitySetting * 0.25
@@ -1326,7 +1515,7 @@ function Card({
       const finishMap = finishMaterialRef.current.map;
       if (finishMap) {
         const shimmerClock =
-          state.clock.getElapsedTime() * THREE.MathUtils.lerp(0.003, 0.02, shimmerSpeedSetting);
+          elapsedTime * THREE.MathUtils.lerp(0.003, 0.02, shimmerSpeedSetting);
         finishMap.offset.x = shimmerClock % 1;
         finishMap.offset.y = (shimmerClock * 0.6) % 1;
         finishMap.repeat.set(1 + shimmerSizeSetting * 0.8, 1 + shimmerSizeSetting * 0.6);
@@ -1349,7 +1538,7 @@ function Card({
       const lineMap = diagonalMaterialRef.current.map;
       if (lineMap) {
         const lineClock =
-          state.clock.getElapsedTime() * THREE.MathUtils.lerp(0.08, 0.22, shimmerSpeedSetting);
+          elapsedTime * THREE.MathUtils.lerp(0.08, 0.22, shimmerSpeedSetting);
         const lineFall = lineClock % 1;
         lineMap.offset.x = 0;
         lineMap.offset.y = lineFall;
@@ -1366,9 +1555,10 @@ function Card({
         : 0;
       const adjustedVisibility =
         rawVisibility * sparkleOpacitySetting * (1.25 + shimmerIntensitySetting * 0.2);
-      const focusBoost = isFocused ? 0.18 * sparkleOpacitySetting : 0;
+      const focusBoost = isFocused ? 0.24 * sparkleOpacitySetting : 0;
+      const rarityGlintFloor = haloStyle.glintFloor * sparkleOpacitySetting;
       const targetSparkleOpacity = sparklesActive
-        ? Math.max(adjustedVisibility, 0.18) + focusBoost
+        ? Math.max(adjustedVisibility, rarityGlintFloor) + focusBoost
         : 0;
       sparkleMaterialRef.current.opacity = THREE.MathUtils.lerp(
         sparkleMaterialRef.current.opacity ?? 0,
@@ -1382,29 +1572,12 @@ function Card({
         const effectiveMotionScale = sparklesActive
           ? Math.max(0.35, sparkleMotionScale * speedScale)
           : sparkleMotionScale;
-        const finalRepeat =
-          sparkleRepeat * (0.88 + sparkleSizeSetting * 0.16 + sparkleQuantitySetting * 0.06);
-        const animationPhase = state.clock.getElapsedTime();
-        const downwardFlow = animationPhase * 0.085 * effectiveMotionScale;
-        const pulseRepeat = finalRepeat * (1 + Math.sin(animationPhase * 1.8) * 0.02);
-        const targetOffsetX = 0;
-        const targetOffsetY = -downwardFlow;
-        const textureDamp = getDampFactor(8.6, delta);
-        sparkleMap.offset.x = THREE.MathUtils.lerp(
-          sparkleMap.offset.x,
-          targetOffsetX,
-          textureDamp
-        );
-        sparkleMap.offset.y = THREE.MathUtils.lerp(
-          sparkleMap.offset.y,
-          targetOffsetY,
-          textureDamp
-        );
-        sparkleMap.rotation = THREE.MathUtils.lerp(
-          sparkleMap.rotation || 0,
-          0,
-          textureDamp
-        );
+        if (sparklesActive || (sparkleMaterialRef.current.opacity ?? 0) > 0.01) {
+          paintPremiumGlintFrame(sparkleField, elapsedTime, effectiveMotionScale);
+        }
+        const pulseRepeat = 1 + Math.sin(elapsedTime * 2.2) * 0.018;
+        sparkleMap.offset.set(0, 0);
+        sparkleMap.rotation = 0;
         sparkleMap.repeat.set(pulseRepeat, pulseRepeat);
         sparkleMap.needsUpdate = true;
       }
@@ -1412,8 +1585,8 @@ function Card({
       const dynamicColor = paletteBaseColor.clone();
       const colorHsl = { h: 0, s: 0, l: 0 };
       dynamicColor.getHSL(colorHsl);
-      const shimmerWave = Math.sin(state.clock.getElapsedTime() * 2.4) * 0.03;
-      const dynamicHue = (colorHsl.h + Math.sin(state.clock.getElapsedTime() * 0.3) * 0.022 + 1) % 1;
+      const shimmerWave = Math.sin(elapsedTime * 2.4) * 0.03;
+      const dynamicHue = (colorHsl.h + Math.sin(elapsedTime * 0.3) * 0.022 + 1) % 1;
       const dynamicSaturation = Math.min(1, colorHsl.s + 0.2);
       const dynamicLightness = clamp01(colorHsl.l + rawVisibility * 0.12 + 0.18 + shimmerWave);
       sparkleMaterialRef.current.color.setHSL(
@@ -1510,6 +1683,26 @@ function Card({
         </mesh>
       )}
       <group ref={cardVisualRef} rotation={rotation}>
+        <mesh position={[0, 0, CARD_HALO_OFFSET]} renderOrder={renderOrder * 10}>
+          <planeGeometry
+            args={[
+              CARD_WIDTH * CARD_HALO_PLANE_SCALE_X * haloStyle.scaleX,
+              CARD_HEIGHT * CARD_HALO_PLANE_SCALE_Y * haloStyle.scaleY
+            ]}
+          />
+          <meshBasicMaterial
+            ref={haloMaterialRef}
+            map={haloTexture || null}
+            color={haloColor}
+            transparent
+            alphaTest={0.001}
+            depthWrite={false}
+            toneMapped={false}
+            side={THREE.DoubleSide}
+            blending={THREE.AdditiveBlending}
+            opacity={0}
+          />
+        </mesh>
         {!hasValidUrls ? (
           <CardContentFallback renderOrderBase={renderOrder * 10} />
         ) : frontTexture && backTexture ? (
@@ -1565,7 +1758,7 @@ function Card({
           <planeGeometry args={[CARD_WIDTH * CARD_SPARKLE_PLANE_SCALE_X, CARD_HEIGHT * CARD_SPARKLE_PLANE_SCALE_Y]} />
           <meshBasicMaterial
             ref={sparkleMaterialRef}
-            map={sparkleTexture || null}
+            map={sparkleField?.texture || null}
             alphaMap={sparkleAuraMask || null}
             color="#bfefff"
             transparent
@@ -1623,9 +1816,14 @@ function areCardPropsEqual(prev, next) {
     prev.finishEffectSettings === next.finishEffectSettings &&
     prev.sparkleIntensity === next.sparkleIntensity &&
     prev.sparklePaletteKey === next.sparklePaletteKey &&
+    prev.diagonalPaletteKey === next.diagonalPaletteKey &&
+    prev.hasExplicitPalette === next.hasExplicitPalette &&
     prev.sparkleVfxFactor === next.sparkleVfxFactor &&
     prev.diagonalCoverage === next.diagonalCoverage &&
     prev.rarity === next.rarity &&
+    prev.sparkleSettings === next.sparkleSettings &&
+    prev.shimmerSettings === next.shimmerSettings &&
+    prev.priceLabelSettings === next.priceLabelSettings &&
     prev.renderOrder === next.renderOrder &&
     prev.onCursorChange === next.onCursorChange &&
     prev.onBoundedPointerEnter === next.onBoundedPointerEnter &&
